@@ -3,3 +3,13 @@
 
 # Environment variables / passwords (never commit)
 .env
+
+# Python virtual environment and bytecode
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local database (created at runtime on each machine)
+instance/
+*.db
