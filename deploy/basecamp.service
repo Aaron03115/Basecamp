@@ -1,0 +1,15 @@
+[Unit]
+Description=Basecamp (Flask app served by gunicorn)
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/basecamp
+Environment=BASECAMP_DB=/opt/basecamp/instance/basecamp.db
+ExecStart=/opt/basecamp/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
