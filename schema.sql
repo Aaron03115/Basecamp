@@ -1,34 +1,33 @@
--- Basecamp schema (SQLite). Safe to run repeatedly.
-PRAGMA foreign_keys = ON;
+-- Basecamp schema (PostgreSQL). Safe to run repeatedly.
 
 CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     name          TEXT NOT NULL,
     email         TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS objectives (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           SERIAL PRIMARY KEY,
     name         TEXT NOT NULL,
     region       TEXT NOT NULL,
     difficulty   TEXT NOT NULL,
     elevation_ft INTEGER,
     season_notes TEXT,
-    lat          REAL,  -- used by the map stretch goal
-    lng          REAL
+    lat          DOUBLE PRECISION,  -- used by the map stretch goal
+    lng          DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS gear_items (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    id        SERIAL PRIMARY KEY,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name      TEXT NOT NULL,
     category  TEXT NOT NULL,
-    weight_oz REAL NOT NULL
+    weight_oz DOUBLE PRECISION NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS loadouts (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    id        SERIAL PRIMARY KEY,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name      TEXT NOT NULL,
     trip_type TEXT NOT NULL
@@ -42,7 +41,7 @@ CREATE TABLE IF NOT EXISTS loadout_items (
 );
 
 CREATE TABLE IF NOT EXISTS trips (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     objective_id  INTEGER NOT NULL REFERENCES objectives(id),
     loadout_id    INTEGER REFERENCES loadouts(id) ON DELETE SET NULL,
@@ -54,8 +53,8 @@ CREATE TABLE IF NOT EXISTS trips (
 );
 
 CREATE TABLE IF NOT EXISTS trip_reports (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     trip_id         INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
     conditions_text TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -1,13 +1,16 @@
 [Unit]
 Description=Basecamp (Flask app served by gunicorn)
-After=network.target
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/basecamp
-Environment=BASECAMP_DB=/opt/basecamp/instance/basecamp.db
-ExecStart=/opt/basecamp/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+Environment=DATABASE_URL=postgresql://basecamp:basecamp@localhost:5432/basecamp
+# --preload imports the app once (which sets up the database) before the workers fork,
+# so the workers never race to create the schema.
+ExecStart=/opt/basecamp/.venv/bin/gunicorn --preload --workers 2 --bind 127.0.0.1:8000 app:app
 Restart=always
 RestartSec=3
 

@@ -1,9 +1,54 @@
 {% extends "base.html" %}
 {% block title %}Home{% endblock %}
 {% block content %}
-  <h1 class="display-5">Hello, Basecamp</h1>
-  <p class="lead">Plan the trip, pack the pack, log the summit.</p>
-  <p class="text-muted">
-    The server is running and the database is set up with {{ objective_count }} sample objectives.
+  <div class="p-5 mb-4 bg-body-tertiary rounded-3">
+    <div class="container-fluid py-3">
+      <h1 class="display-5 fw-bold">Basecamp</h1>
+      <p class="col-md-9 fs-5">
+        Plan the trip, pack the pack, log the summit &mdash; all in one place.
+        Basecamp ties your objective, your gear loadout, and your completion
+        record into a single connected trip, instead of scattering them across
+        notes apps, spreadsheets, and guidebooks.
+      </p>
+      <a class="btn btn-primary btn-lg" href="/objectives" role="button">Browse objectives</a>
+    </div>
+  </div>
+
+  <div class="row align-items-md-stretch g-4">
+    <div class="col-md-6">
+      <div class="h-100 p-4 bg-body-tertiary border rounded-3">
+        <h2 class="h4">What it does</h2>
+        <ul class="mb-0">
+          <li>Search objectives (peaks, routes, trails) by region, difficulty, and season.</li>
+          <li>Build reusable gear loadouts with automatic weight totals.</li>
+          <li>Plan trips around an objective and track them from planned to completed.</li>
+          <li>Keep a Summit Log of everything you&rsquo;ve finished.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="h-100 p-4 bg-body-tertiary border rounded-3">
+        <h2 class="h4">Who it&rsquo;s for</h2>
+        <p class="mb-0">
+          Backcountry hikers, backpackers, and mountaineers &mdash; especially
+          college outdoor-club members, mountaineering-course students, and
+          informal groups who plan trips together and want their planning and
+          record-keeping to live in the same tool.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  <h2 class="h5 text-muted">Explore</h2>
+  <div class="row row-cols-2 row-cols-md-3 g-3 mb-4">
+    {% for page in pages %}
+    <div class="col"><a class="btn btn-outline-secondary w-100" href="{{ page.path }}">{{ page.label }}</a></div>
+    {% endfor %}
+  </div>
+
+  <p class="text-muted small">
+    Server is running and the database is set up with {{ objective_count }} sample objectives.
   </p>
 {% endblock %}

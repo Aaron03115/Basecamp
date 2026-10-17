@@ -4,11 +4,12 @@
 # Environment variables / passwords (never commit)
 .env
 
-# Python virtual environment and bytecode
+# Python virtual environment, bytecode, and test cache
 .venv/
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Local database (created at runtime on each machine)
 instance/

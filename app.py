@@ -1,10 +1,21 @@
 import os
-import sqlite3
 
+import psycopg
 from flask import Flask, g, jsonify, render_template
+from psycopg.rows import dict_row
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("BASECAMP_DB", os.path.join(BASE_DIR, "instance", "basecamp.db"))
+
+# PostgreSQL connection string. Override with DATABASE_URL in the environment.
+# Example: postgresql://basecamp:basecamp@localhost:5432/basecamp
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://basecamp:basecamp@localhost:5432/basecamp",
+)
+
+# Arbitrary constant used as a PostgreSQL advisory-lock key so that several
+# processes starting at once (gunicorn workers, tests) set up the schema one at a time.
+INIT_LOCK_ID = 727274
 
 SEED_OBJECTIVES = [
     ("Mount Elbert", "Sawatch Range", "Class 1", 14439, "Late June to September is typically snow-free.", 39.1178, -106.4454),
@@ -14,15 +25,30 @@ SEED_OBJECTIVES = [
     ("Grays Peak", "Front Range", "Class 1", 14278, "Often paired with neighboring Torreys Peak.", 39.6339, -105.8176),
 ]
 
+# Pages from the project spec. Pages that are not built yet render a "coming soon"
+# page (below) so navigation never hits a 404. When you build a real page, add its
+# route and DELETE its "checkpoint" key here so the placeholder is not registered.
+PAGES = [
+    {"path": "/objectives", "label": "Objectives", "checkpoint": 2},
+    {"path": "/gear", "label": "Gear Library", "checkpoint": 3},
+    {"path": "/loadouts", "label": "Loadout Builder", "checkpoint": 4},
+    {"path": "/trips/plan", "label": "Plan a Trip", "checkpoint": 5},
+    {"path": "/trips", "label": "My Trips", "checkpoint": 5},
+    {"path": "/summit-log", "label": "Summit Log", "checkpoint": 7},
+]
+
 app = Flask(__name__)
-app.config["DB_PATH"] = DB_PATH
+app.config["DATABASE_URL"] = DATABASE_URL
+
+
+def get_db_connection():
+    """Open a new PostgreSQL connection (no Flask request context needed)."""
+    return psycopg.connect(app.config["DATABASE_URL"], row_factory=dict_row)
 
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(app.config["DB_PATH"])
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = get_db_connection()
     return g.db
 
 
@@ -34,39 +60,67 @@ def close_db(_exc):
 
 
 def init_db():
-    """Create the database file and tables, and seed sample objectives once.
+    """Create the tables and seed sample objectives once.
 
-    Safe to call every time the app starts or start.sh runs.
+    Safe to call every time the app starts or start.sh runs, and safe when several
+    processes call it at the same time: an advisory lock makes them take turns, so
+    the schema is created and the sample data inserted exactly once.
     """
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        with open(os.path.join(BASE_DIR, "schema.sql"), encoding="utf-8") as f:
-            conn.executescript(f.read())
-        count = conn.execute("SELECT COUNT(*) FROM objectives").fetchone()[0]
-        if count == 0:
-            conn.executemany(
-                "INSERT INTO objectives (name, region, difficulty, elevation_ft, season_notes, lat, lng) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                SEED_OBJECTIVES,
-            )
+    with open(os.path.join(BASE_DIR, "schema.sql"), encoding="utf-8") as f:
+        schema_sql = f.read()
+    with psycopg.connect(app.config["DATABASE_URL"]) as conn:
+        with conn.cursor() as cur:
+            # Held until this transaction commits.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (INIT_LOCK_ID,))
+            cur.execute(schema_sql)
+            cur.execute("SELECT COUNT(*) FROM objectives")
+            count = cur.fetchone()[0]
+            if count == 0:
+                cur.executemany(
+                    "INSERT INTO objectives "
+                    "(name, region, difficulty, elevation_ft, season_notes, lat, lng) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    SEED_OBJECTIVES,
+                )
         conn.commit()
-    finally:
-        conn.close()
 
 
-init_db()
+@app.context_processor
+def inject_pages():
+    """Make the page list available to every template (navbar + landing page)."""
+    return {"pages": PAGES}
 
 
 @app.route("/")
 def index():
-    count = get_db().execute("SELECT COUNT(*) FROM objectives").fetchone()[0]
+    with get_db().cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM objectives")
+        count = cur.fetchone()["n"]
     return render_template("index.html", objective_count=count)
 
 
 @app.route("/api/health")
 def health():
     return jsonify(status="ok")
+
+
+def _planned_view(label, checkpoint):
+    def view():
+        return render_template("coming_soon.html", title=label, checkpoint=checkpoint)
+    return view
+
+
+for _page in PAGES:
+    if "checkpoint" in _page:
+        app.add_url_rule(
+            _page["path"],
+            endpoint="planned_" + _page["path"].strip("/").replace("/", "_"),
+            view_func=_planned_view(_page["label"], _page["checkpoint"]),
+        )
+
+
+# Initialize the schema when the module is imported (gunicorn, start.sh, tests).
+init_db()
 
 
 if __name__ == "__main__":
