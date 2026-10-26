@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ o.name }}{% endblock %}
+{% block content %}
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/objectives">Objectives</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ o.name }}</li>
+  </ol></nav>
+  <h1 class="h2">{{ o.name }}</h1>
+  <p class="text-muted">{{ o.region }}</p>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Difficulty</div><div class="fw-semibold">{{ o.difficulty }}</div></div></div>
+    <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Elevation</div><div class="fw-semibold">{{ "{:,}".format(o.elevation_ft) if o.elevation_ft else "-" }} ft</div></div></div>
+    <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Best season</div><div class="fw-semibold">{{ o.best_season or "-" }}</div></div></div>
+    <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Coordinates</div><div class="fw-semibold">{% if o.lat is not none %}{{ "%.4f"|format(o.lat) }}, {{ "%.4f"|format(o.lng) }}{% else %}-{% endif %}</div></div></div>
+  </div>
+
+  <h2 class="h5">Season and conditions notes</h2>
+  <p>{{ o.season_notes or "No notes yet." }}</p>
+
+  <h2 class="h5 mt-4">Recent trip reports</h2>
+  {% if reports %}
+    <ul class="list-group mb-4">
+    {% for r in reports %}
+      <li class="list-group-item">
+        <div class="small text-muted">{{ r.created_at.strftime("%b %d, %Y") }}{% if r.trip_date %} (trip: {{ r.trip_date }}){% endif %}</div>
+        {{ r.conditions_text }}
+      </li>
+    {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-muted">No trip reports yet. Reports will appear here once the summit log is built.</p>
+  {% endif %}
+
+  <a class="btn btn-primary" href="/trips/plan?objective={{ o.id }}">Plan a trip here</a>
+  <a class="btn btn-outline-secondary" href="/objectives">Back to objectives</a>
+  <p class="small text-muted mt-4">Safety: conditions change quickly. Treat these notes as a starting point, not a forecast.</p>
+{% endblock %}

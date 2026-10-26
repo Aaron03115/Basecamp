@@ -21,7 +21,7 @@
           </li>
           {% for page in pages %}
           <li class="nav-item">
-            <a class="nav-link{% if request.path == page.path %} active{% endif %}" href="{{ page.path }}">{{ page.label }}</a>
+            <a class="nav-link{% if request.path == page.path or request.path.startswith(page.path + '/') %} active{% endif %}" href="{{ page.path }}">{{ page.label }}</a>
           </li>
           {% endfor %}
         </ul>

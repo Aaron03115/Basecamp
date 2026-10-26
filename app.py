@@ -1,7 +1,9 @@
+import json
 import os
+from urllib.parse import urlencode
 
 import psycopg
-from flask import Flask, g, jsonify, render_template
+from flask import Flask, abort, g, jsonify, render_template, request
 from psycopg.rows import dict_row
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,19 +19,23 @@ DATABASE_URL = os.environ.get(
 # processes starting at once (gunicorn workers, tests) set up the schema one at a time.
 INIT_LOCK_ID = 727274
 
-SEED_OBJECTIVES = [
-    ("Mount Elbert", "Sawatch Range", "Class 1", 14439, "Late June to September is typically snow-free.", 39.1178, -106.4454),
-    ("Longs Peak (Keyhole Route)", "Front Range", "Class 3", 14259, "Start before dawn; afternoon storms are common.", 40.2549, -105.6162),
-    ("Quandary Peak", "Tenmile Range", "Class 1", 14265, "Popular beginner 14er; snow lingers into June.", 39.3972, -106.1064),
-    ("Mount Bierstadt", "Front Range", "Class 2", 14060, "Willow thickets near the start can be wet in early summer.", 39.5827, -105.6686),
-    ("Grays Peak", "Front Range", "Class 1", 14278, "Often paired with neighboring Torreys Peak.", 39.6339, -105.8176),
-]
+SEED_FILE = os.path.join(BASE_DIR, "data", "seed_objectives.json")
+PER_PAGE = 12
+
+
+def load_seed_objectives():
+    """Read the curated objectives from data/seed_objectives.json."""
+    with open(SEED_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+SEED_OBJECTIVES = load_seed_objectives()
 
 # Pages from the project spec. Pages that are not built yet render a "coming soon"
 # page (below) so navigation never hits a 404. When you build a real page, add its
 # route and DELETE its "checkpoint" key here so the placeholder is not registered.
 PAGES = [
-    {"path": "/objectives", "label": "Objectives", "checkpoint": 2},
+    {"path": "/objectives", "label": "Objectives"},
     {"path": "/gear", "label": "Gear Library", "checkpoint": 3},
     {"path": "/loadouts", "label": "Loadout Builder", "checkpoint": 4},
     {"path": "/trips/plan", "label": "Plan a Trip", "checkpoint": 5},
@@ -60,7 +66,7 @@ def close_db(_exc):
 
 
 def init_db():
-    """Create the tables and seed sample objectives once.
+    """Create/upgrade the tables and load the objectives from data/seed_objectives.json.
 
     Safe to call every time the app starts or start.sh runs, and safe when several
     processes call it at the same time: an advisory lock makes them take turns, so
@@ -73,15 +79,19 @@ def init_db():
             # Held until this transaction commits.
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (INIT_LOCK_ID,))
             cur.execute(schema_sql)
-            cur.execute("SELECT COUNT(*) FROM objectives")
-            count = cur.fetchone()[0]
-            if count == 0:
-                cur.executemany(
-                    "INSERT INTO objectives "
-                    "(name, region, difficulty, elevation_ft, season_notes, lat, lng) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    SEED_OBJECTIVES,
-                )
+            # Upsert by name: new peaks are added, existing ones are refreshed, and
+            # anything a user created elsewhere (trips, reports) is left alone.
+            cur.executemany(
+                "INSERT INTO objectives "
+                "(name, region, difficulty, elevation_ft, best_season, season_notes, lat, lng) "
+                "VALUES (%(name)s, %(region)s, %(difficulty)s, %(elevation_ft)s, "
+                "%(best_season)s, %(season_notes)s, %(lat)s, %(lng)s) "
+                "ON CONFLICT (name) DO UPDATE SET "
+                "region = EXCLUDED.region, difficulty = EXCLUDED.difficulty, "
+                "elevation_ft = EXCLUDED.elevation_ft, best_season = EXCLUDED.best_season, "
+                "season_notes = EXCLUDED.season_notes, lat = EXCLUDED.lat, lng = EXCLUDED.lng",
+                SEED_OBJECTIVES,
+            )
         conn.commit()
 
 
@@ -91,12 +101,103 @@ def inject_pages():
     return {"pages": PAGES}
 
 
+def page_url(n):
+    """URL of /objectives page n that keeps the current search and filters."""
+    args = {k: v for k, v in request.args.items() if k in ("q", "region", "difficulty", "season") and v}
+    args["page"] = n
+    return "/objectives?" + urlencode(args)
+
+
+app.jinja_env.globals["page_url"] = page_url
+
+
 @app.route("/")
 def index():
     with get_db().cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n FROM objectives")
         count = cur.fetchone()["n"]
     return render_template("index.html", objective_count=count)
+
+
+def _filter_options(cur):
+    cur.execute("SELECT DISTINCT region FROM objectives ORDER BY region")
+    regions = [r["region"] for r in cur.fetchall()]
+    cur.execute("SELECT DISTINCT difficulty FROM objectives ORDER BY difficulty")
+    difficulties = [r["difficulty"] for r in cur.fetchall()]
+    cur.execute("SELECT DISTINCT best_season FROM objectives WHERE best_season IS NOT NULL ORDER BY best_season")
+    seasons = [r["best_season"] for r in cur.fetchall()]
+    return regions, difficulties, seasons
+
+
+@app.route("/objectives")
+def objectives():
+    """Browse, search and filter objectives. All values reach SQL as parameters."""
+    q = request.args.get("q", "").strip()
+    region = request.args.get("region", "").strip()
+    difficulty = request.args.get("difficulty", "").strip()
+    season = request.args.get("season", "").strip()
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+
+    where, params = [], []
+    if q:
+        where.append("(name ILIKE %s OR region ILIKE %s)")
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params += [like, like]
+    if region:
+        where.append("region = %s")
+        params.append(region)
+    if difficulty:
+        where.append("difficulty = %s")
+        params.append(difficulty)
+    if season:
+        where.append("best_season = %s")
+        params.append(season)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+
+    with get_db().cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM objectives" + clause, params)
+        total = cur.fetchone()["n"]
+        total_pages = max(1, -(-total // PER_PAGE))
+        page = min(page, total_pages)
+        cur.execute(
+            "SELECT id, name, region, difficulty, elevation_ft, best_season FROM objectives"
+            + clause + " ORDER BY elevation_ft DESC NULLS LAST, name LIMIT %s OFFSET %s",
+            params + [PER_PAGE, (page - 1) * PER_PAGE],
+        )
+        rows = cur.fetchall()
+        regions, difficulties, seasons = _filter_options(cur)
+
+    filters = {"q": q, "region": region, "difficulty": difficulty, "season": season}
+    return render_template(
+        "objectives.html", objectives=rows, total=total, page=page, total_pages=total_pages,
+        filters=filters, regions=regions, difficulties=difficulties, seasons=seasons,
+        active_filters={k: v for k, v in filters.items() if v},
+    )
+
+
+@app.route("/objectives/<int:objective_id>")
+def objective_detail(objective_id):
+    with get_db().cursor() as cur:
+        cur.execute("SELECT * FROM objectives WHERE id = %s", (objective_id,))
+        objective = cur.fetchone()
+        if objective is None:
+            abort(404)
+        cur.execute(
+            "SELECT r.conditions_text, r.created_at, t.trip_date, t.status "
+            "FROM trip_reports r JOIN trips t ON t.id = r.trip_id "
+            "WHERE t.objective_id = %s ORDER BY r.created_at DESC LIMIT 10",
+            (objective_id,),
+        )
+        reports = cur.fetchall()
+    return render_template("objective_detail.html", o=objective, reports=reports)
+
+
+@app.errorhandler(404)
+def not_found(_exc):
+    return render_template("404.html"), 404
 
 
 @app.route("/api/health")

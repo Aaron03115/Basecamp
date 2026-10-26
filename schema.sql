@@ -58,3 +58,13 @@ CREATE TABLE IF NOT EXISTS trip_reports (
     conditions_text TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Checkpoint 2: objective library upgrades (all safe to re-run).
+ALTER TABLE objectives ADD COLUMN IF NOT EXISTS best_season TEXT;
+
+-- Remove accidental duplicate names, but never one that a trip refers to.
+DELETE FROM objectives o
+ WHERE EXISTS (SELECT 1 FROM objectives k WHERE k.name = o.name AND k.id < o.id)
+   AND NOT EXISTS (SELECT 1 FROM trips t WHERE t.objective_id = o.id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS objectives_name_key ON objectives (name);

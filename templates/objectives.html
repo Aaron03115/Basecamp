@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Objectives{% endblock %}
+{% block content %}
+  <h1 class="h2 mb-1">Objectives</h1>
+  <p class="text-muted">Browse peaks and routes. Search by name, then narrow by region, difficulty, or season.</p>
+
+  <form class="row g-2 mb-4" method="get" action="/objectives">
+    <div class="col-12 col-md-4">
+      <label class="form-label small" for="q">Search</label>
+      <input class="form-control" id="q" name="q" value="{{ filters.q }}" placeholder="e.g. Elbert or Sawatch">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small" for="region">Region</label>
+      <select class="form-select" id="region" name="region">
+        <option value="">Any</option>
+        {% for r in regions %}<option value="{{ r }}"{% if r == filters.region %} selected{% endif %}>{{ r }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small" for="difficulty">Difficulty</label>
+      <select class="form-select" id="difficulty" name="difficulty">
+        <option value="">Any</option>
+        {% for d in difficulties %}<option value="{{ d }}"{% if d == filters.difficulty %} selected{% endif %}>{{ d }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small" for="season">Season</label>
+      <select class="form-select" id="season" name="season">
+        <option value="">Any</option>
+        {% for s in seasons %}<option value="{{ s }}"{% if s == filters.season %} selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2 d-flex align-items-end gap-2">
+      <button class="btn btn-primary" type="submit">Search</button>
+      <a class="btn btn-outline-secondary" href="/objectives">Clear</a>
+    </div>
+  </form>
+
+  <p class="small text-muted" id="result-count">{{ total }} objective{{ '' if total == 1 else 's' }} found</p>
+
+  {% if objectives %}
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead><tr><th>Name</th><th>Region</th><th>Difficulty</th><th class="text-end">Elevation</th><th>Best season</th></tr></thead>
+      <tbody>
+      {% for o in objectives %}
+        <tr>
+          <td><a href="/objectives/{{ o.id }}">{{ o.name }}</a></td>
+          <td>{{ o.region }}</td>
+          <td>{{ o.difficulty }}</td>
+          <td class="text-end">{{ "{:,}".format(o.elevation_ft) if o.elevation_ft else "-" }} ft</td>
+          <td>{{ o.best_season or "-" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if total_pages > 1 %}
+  <nav aria-label="Objective pages"><ul class="pagination">
+    <li class="page-item{% if page == 1 %} disabled{% endif %}"><a class="page-link" href="{{ page_url(page - 1) }}">Previous</a></li>
+    <li class="page-item disabled"><span class="page-link">Page {{ page }} of {{ total_pages }}</span></li>
+    <li class="page-item{% if page == total_pages %} disabled{% endif %}"><a class="page-link" href="{{ page_url(page + 1) }}">Next</a></li>
+  </ul></nav>
+  {% endif %}
+  {% else %}
+  <div class="alert alert-secondary">No objectives match those filters. <a href="/objectives">Clear the filters</a>.</div>
+  {% endif %}
+  <p class="small text-muted mt-4">Peak data curated by hand; additional coordinates and elevations from © OpenStreetMap contributors.</p>
+{% endblock %}

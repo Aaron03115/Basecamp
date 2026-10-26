@@ -22,7 +22,7 @@ Plan a trip around an objective, attach a gear loadout, and log completed summit
 `./start.sh` does everything else for you. It checks Python, installs PostgreSQL with `apt` if
 it is missing (it uses `sudo`, so it may ask for your password), starts the server, creates the
 `basecamp` database role, the `basecamp` database and a `basecamp_test` database, creates a
-virtual environment, installs `requirements.txt`, creates the tables with sample objectives,
+virtual environment, installs `requirements.txt`, creates the tables and loads the objectives from `data/seed_objectives.json`,
 and starts the app. It is safe to run again.
 
 Options:
@@ -70,9 +70,30 @@ Use a different test database with `TEST_DATABASE_URL=postgresql://... ` (its na
 
 ## Pages
 
+| Page | What it does |
+|---|---|
+| `/objectives` | Browse the objectives library. Search by name or region and filter by region, difficulty and season. Results are paginated. |
+| `/objectives/<id>` | Detail page: elevation, difficulty, best season, coordinates, conditions notes, recent trip reports, and a "Plan a trip here" link. |
+
 The navbar links to every planned page. Pages not built yet show a "planned for Checkpoint N"
 placeholder instead of a 404. When you build a real page, add its route and remove its
 `checkpoint` entry from `PAGES` in `app.py`.
+
+## Objective data
+
+Objectives live in `data/seed_objectives.json` (hand-curated: region, difficulty, best season and notes
+are written by hand). Every time the app starts, `init_db()` upserts that file into the `objectives`
+table by name, so editing the file and redeploying updates the live site without losing anything else.
+
+To add more peaks from OpenStreetMap (run on a machine with internet access, then review and commit):
+
+```bash
+python3 scripts/import_osm_peaks.py --dry-run   # see what would be added
+python3 scripts/import_osm_peaks.py             # add Colorado peaks of 13,000 ft or more
+```
+
+Existing entries are never overwritten. Peak coordinates and elevations from OpenStreetMap are
+(c) OpenStreetMap contributors, ODbL.
 
 ## Files
 
@@ -84,4 +105,6 @@ placeholder instead of a 404. When you build a real page, add its route and remo
 | `deploy/nginx-basecamp.conf` | nginx forwards port 80 to the app |
 | `deploy/deploy.sh` | Copies code to the server and restarts it (runs on your laptop) |
 | `app.py`, `schema.sql`, `templates/` | The Flask app, database schema, and pages |
+| `data/seed_objectives.json` | The objectives library (loaded into PostgreSQL on startup) |
+| `scripts/import_osm_peaks.py` | Optional helper that adds peaks from OpenStreetMap to the seed file |
 | `tests/` | pytest suite (grows with each checkpoint) |
