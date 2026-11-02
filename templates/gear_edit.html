@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Edit gear{% endblock %}
+{% block content %}
+  <h1 class="h2 mb-3">Edit gear item</h1>
+  <form class="row g-2 align-items-end" method="post" action="/gear/{{ item.id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% include "_gear_fields.html" %}
+    <div class="col-12 col-md-2 d-flex gap-2"><button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-outline-secondary" href="/gear">Cancel</a></div>
+  </form>
+{% endblock %}

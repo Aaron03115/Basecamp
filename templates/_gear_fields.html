@@ -1,0 +1,13 @@
+<div class="col-12 col-md-4"><label class="form-label small" for="name">Item name</label>
+  <input class="form-control" id="name" name="name" value="{{ form.name }}" maxlength="100" required></div>
+<div class="col-6 col-md-3"><label class="form-label small" for="category">Category</label>
+  <select class="form-select" id="category" name="category" required>
+    <option value="">Choose...</option>
+    {% for c in categories %}<option value="{{ c }}"{% if c == form.category %} selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select></div>
+<div class="col-3 col-md-2"><label class="form-label small" for="weight">Weight</label>
+  <input class="form-control" id="weight" name="weight" inputmode="decimal" value="{{ form.weight }}" required></div>
+<div class="col-3 col-md-1"><label class="form-label small" for="unit">Unit</label>
+  <select class="form-select" id="unit" name="unit">
+    {% for u in ["oz", "lb", "g", "kg"] %}<option value="{{ u }}"{% if u == form.unit %} selected{% endif %}>{{ u }}</option>{% endfor %}
+  </select></div>

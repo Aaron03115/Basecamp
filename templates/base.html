@@ -25,11 +25,30 @@
           </li>
           {% endfor %}
         </ul>
+        <ul class="navbar-nav ms-lg-3">
+          {% if current_user %}
+          <li class="nav-item d-flex align-items-center text-light small me-lg-2">Hi, {{ current_user.name }}</li>
+          <li class="nav-item">
+            <form method="post" action="/logout" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-outline-light btn-sm" type="submit">Log out</button>
+            </form>
+          </li>
+          {% else %}
+          <li class="nav-item"><a class="nav-link{% if request.path == '/login' %} active{% endif %}" href="/login">Log in</a></li>
+          <li class="nav-item"><a class="btn btn-primary btn-sm mt-1" href="/signup">Sign up</a></li>
+          {% endif %}
+        </ul>
       </div>
     </div>
   </nav>
 
   <main class="container py-5 flex-grow-1">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
     {% block content %}{% endblock %}
   </main>
 

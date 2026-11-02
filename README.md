@@ -75,9 +75,18 @@ Use a different test database with `TEST_DATABASE_URL=postgresql://... ` (its na
 | `/objectives` | Browse the objectives library. Search by name or region and filter by region, difficulty and season. Results are paginated. |
 | `/objectives/<id>` | Detail page: elevation, difficulty, best season, coordinates, conditions notes, recent trip reports, and a "Plan a trip here" link. |
 
+| `/signup`, `/login`, `/logout` | Accounts. Passwords are stored hashed (never in plain text), forms carry a CSRF token, and logging in starts a fresh session. |
+| `/gear` | Your personal gear library (login required): add, edit and delete items with a name, category and weight (oz, lb, g or kg), a total weight with a per-category breakdown, and a category filter. You can only see and change your own items. |
+
 The navbar links to every planned page. Pages not built yet show a "planned for Checkpoint N"
 placeholder instead of a 404. When you build a real page, add its route and remove its
 `checkpoint` entry from `PAGES` in `app.py`.
+
+## Accounts and the secret key
+
+Login cookies are signed with a secret key. Set `SECRET_KEY` in the environment to choose one;
+otherwise the app creates `instance/secret_key` the first time it runs and reuses it (that folder is
+git-ignored and `deploy.sh` never overwrites it, so logins survive redeploys).
 
 ## Objective data
 

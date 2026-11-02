@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-md-6 col-lg-5">
+  <h1 class="h2 mb-3">Log in</h1>
+  <form method="post" action="/login" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <div class="mb-3"><label class="form-label" for="email">Email</label>
+      <input class="form-control" id="email" name="email" type="email" value="{{ email }}" required autofocus></div>
+    <div class="mb-3"><label class="form-label" for="password">Password</label>
+      <input class="form-control" id="password" name="password" type="password" required></div>
+    <button class="btn btn-primary" type="submit">Log in</button>
+    <span class="ms-2 small">New here? <a href="/signup">Create an account</a></span>
+  </form>
+</div></div>
+{% endblock %}
