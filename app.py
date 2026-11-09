@@ -45,7 +45,7 @@ SEED_OBJECTIVES = load_seed_objectives()
 PAGES = [
     {"path": "/objectives", "label": "Objectives"},
     {"path": "/gear", "label": "Gear Library"},
-    {"path": "/loadouts", "label": "Loadout Builder", "checkpoint": 4},
+    {"path": "/loadouts", "label": "Loadout Builder"},
     {"path": "/trips/plan", "label": "Plan a Trip", "checkpoint": 5},
     {"path": "/trips", "label": "My Trips", "checkpoint": 5},
     {"path": "/summit-log", "label": "Summit Log", "checkpoint": 7},
@@ -55,6 +55,11 @@ GEAR_CATEGORIES = [
     "Shelter", "Sleep", "Packs", "Clothing", "Footwear", "Cooking", "Water",
     "Navigation", "Safety", "Climbing", "Electronics", "Other",
 ]
+TRIP_TYPES = [
+    "Day hike", "Overnight", "Weekend backpacking", "Multi-day trek",
+    "Peak climb", "Winter / snow", "Other",
+]
+MAX_QTY = 99
 WEIGHT_UNITS = {"oz": 1.0, "lb": 16.0, "g": 0.03527396195, "kg": 35.27396195}
 MAX_WEIGHT_OZ = 10000
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -524,6 +529,240 @@ def gear_delete(item_id):
     db.commit()
     flash(f"Deleted {item['name']}.", "info")
     return redirect(url_for("gear"))
+
+
+# ---------------------------------------------------------------------------
+# Loadout builder: named, reusable packing lists made from your gear library
+# ---------------------------------------------------------------------------
+def parse_loadout_form(form):
+    name = form.get("name", "").strip()
+    trip_type = form.get("trip_type", "")
+    errors = []
+    if not name or len(name) > 100:
+        errors.append("Enter a loadout name (up to 100 characters).")
+    if trip_type not in TRIP_TYPES:
+        errors.append("Choose a trip type from the list.")
+    return {"name": name, "trip_type": trip_type}, errors
+
+
+def parse_qty(raw):
+    """Quantity must be a whole number from 1 to MAX_QTY, else None."""
+    raw = (raw or "").strip()
+    if not raw.isdigit():
+        return None
+    qty = int(raw)
+    return qty if 1 <= qty <= MAX_QTY else None
+
+
+def get_own_loadout_or_404(loadout_id):
+    with get_db().cursor() as cur:
+        cur.execute("SELECT * FROM loadouts WHERE id = %s AND user_id = %s", (loadout_id, g.user["id"]))
+        loadout = cur.fetchone()
+    if loadout is None:
+        abort(404)
+    return loadout
+
+
+def loadouts_list_context():
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT l.id, l.name, l.trip_type, "
+            "COALESCE(SUM(li.qty), 0) AS item_count, "
+            "COALESCE(SUM(gi.weight_oz * li.qty), 0) AS total_oz "
+            "FROM loadouts l "
+            "LEFT JOIN loadout_items li ON li.loadout_id = l.id "
+            "LEFT JOIN gear_items gi ON gi.id = li.gear_item_id "
+            "WHERE l.user_id = %s GROUP BY l.id ORDER BY l.name, l.id",
+            (g.user["id"],),
+        )
+        loadouts = cur.fetchall()
+    return {"loadouts": loadouts, "trip_types": TRIP_TYPES, "form": {"name": "", "trip_type": ""}}
+
+
+@app.route("/loadouts")
+@login_required
+def loadouts():
+    return render_template("loadouts.html", **loadouts_list_context())
+
+
+@app.route("/loadouts/new", methods=["POST"])
+@login_required
+def loadout_create():
+    values, errors = parse_loadout_form(request.form)
+    if errors:
+        for e in errors:
+            flash(e, "danger")
+        context = loadouts_list_context()
+        context["form"] = values
+        return render_template("loadouts.html", **context), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO loadouts (user_id, name, trip_type) VALUES (%s, %s, %s) RETURNING id",
+            (g.user["id"], values["name"], values["trip_type"]),
+        )
+        new_id = cur.fetchone()["id"]
+    db.commit()
+    flash(f"Created {values['name']}. Now add some gear.", "success")
+    return redirect(url_for("loadout_detail", loadout_id=new_id))
+
+
+def loadout_detail_context(loadout):
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT li.gear_item_id, li.qty, gi.name, gi.category, gi.weight_oz, "
+            "gi.weight_oz * li.qty AS line_oz "
+            "FROM loadout_items li JOIN gear_items gi ON gi.id = li.gear_item_id "
+            "WHERE li.loadout_id = %s ORDER BY gi.category, gi.name",
+            (loadout["id"],),
+        )
+        items = cur.fetchall()
+        cur.execute(
+            "SELECT gi.category, SUM(gi.weight_oz * li.qty) AS oz, SUM(li.qty) AS n "
+            "FROM loadout_items li JOIN gear_items gi ON gi.id = li.gear_item_id "
+            "WHERE li.loadout_id = %s GROUP BY gi.category ORDER BY gi.category",
+            (loadout["id"],),
+        )
+        totals = cur.fetchall()
+        cur.execute(
+            "SELECT id, name, category, weight_oz FROM gear_items WHERE user_id = %s "
+            "ORDER BY category, name",
+            (g.user["id"],),
+        )
+        gear_choices = cur.fetchall()
+    return {
+        "loadout": loadout, "items": items, "totals": totals, "gear_choices": gear_choices,
+        "total_oz": sum(t["oz"] for t in totals), "total_count": sum(t["n"] for t in totals),
+        "trip_types": TRIP_TYPES, "max_qty": MAX_QTY,
+        "form": {"name": loadout["name"], "trip_type": loadout["trip_type"]},
+    }
+
+
+@app.route("/loadouts/<int:loadout_id>")
+@login_required
+def loadout_detail(loadout_id):
+    loadout = get_own_loadout_or_404(loadout_id)
+    return render_template("loadout_detail.html", **loadout_detail_context(loadout))
+
+
+@app.route("/loadouts/<int:loadout_id>/edit", methods=["POST"])
+@login_required
+def loadout_edit(loadout_id):
+    loadout = get_own_loadout_or_404(loadout_id)
+    values, errors = parse_loadout_form(request.form)
+    if errors:
+        for e in errors:
+            flash(e, "danger")
+        context = loadout_detail_context(loadout)
+        context["form"] = values
+        return render_template("loadout_detail.html", **context), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE loadouts SET name = %s, trip_type = %s WHERE id = %s AND user_id = %s",
+            (values["name"], values["trip_type"], loadout_id, g.user["id"]),
+        )
+    db.commit()
+    flash("Loadout updated.", "success")
+    return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+
+
+@app.route("/loadouts/<int:loadout_id>/delete", methods=["POST"])
+@login_required
+def loadout_delete(loadout_id):
+    loadout = get_own_loadout_or_404(loadout_id)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM loadouts WHERE id = %s AND user_id = %s", (loadout_id, g.user["id"]))
+    db.commit()
+    flash(f"Deleted {loadout['name']}.", "info")
+    return redirect(url_for("loadouts"))
+
+
+@app.route("/loadouts/<int:loadout_id>/copy", methods=["POST"])
+@login_required
+def loadout_copy(loadout_id):
+    loadout = get_own_loadout_or_404(loadout_id)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO loadouts (user_id, name, trip_type) VALUES (%s, %s, %s) RETURNING id",
+            (g.user["id"], (loadout["name"] + " (copy)")[:100], loadout["trip_type"]),
+        )
+        new_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO loadout_items (loadout_id, gear_item_id, qty) "
+            "SELECT %s, gear_item_id, qty FROM loadout_items WHERE loadout_id = %s",
+            (new_id, loadout_id),
+        )
+    db.commit()
+    flash("Copied. Edit the copy without changing the original.", "success")
+    return redirect(url_for("loadout_detail", loadout_id=new_id))
+
+
+@app.route("/loadouts/<int:loadout_id>/items", methods=["POST"])
+@login_required
+def loadout_add_item(loadout_id):
+    get_own_loadout_or_404(loadout_id)
+    qty = parse_qty(request.form.get("qty", "1"))
+    gear_id = request.form.get("gear_item_id", "")
+    if qty is None:
+        flash(f"Quantity must be a whole number from 1 to {MAX_QTY}.", "danger")
+        return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT id, name FROM gear_items WHERE id = %s AND user_id = %s",
+            (gear_id if gear_id.isdigit() else -1, g.user["id"]),
+        )
+        item = cur.fetchone()
+    if item is None:
+        flash("Choose one of your gear items to add.", "danger")
+        return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+    db = get_db()
+    with db.cursor() as cur:
+        # Adding gear that is already packed increases its quantity instead of failing.
+        cur.execute(
+            "INSERT INTO loadout_items (loadout_id, gear_item_id, qty) VALUES (%s, %s, %s) "
+            "ON CONFLICT (loadout_id, gear_item_id) DO UPDATE "
+            "SET qty = LEAST(loadout_items.qty + EXCLUDED.qty, %s)",
+            (loadout_id, item["id"], qty, MAX_QTY),
+        )
+    db.commit()
+    flash(f"Added {item['name']}.", "success")
+    return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+
+
+@app.route("/loadouts/<int:loadout_id>/items/<int:gear_id>/qty", methods=["POST"])
+@login_required
+def loadout_set_qty(loadout_id, gear_id):
+    get_own_loadout_or_404(loadout_id)
+    qty = parse_qty(request.form.get("qty", ""))
+    if qty is None:
+        flash(f"Quantity must be a whole number from 1 to {MAX_QTY}.", "danger")
+        return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE loadout_items SET qty = %s WHERE loadout_id = %s AND gear_item_id = %s",
+            (qty, loadout_id, gear_id),
+        )
+    db.commit()
+    return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+
+
+@app.route("/loadouts/<int:loadout_id>/items/<int:gear_id>/remove", methods=["POST"])
+@login_required
+def loadout_remove_item(loadout_id, gear_id):
+    get_own_loadout_or_404(loadout_id)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "DELETE FROM loadout_items WHERE loadout_id = %s AND gear_item_id = %s",
+            (loadout_id, gear_id),
+        )
+    db.commit()
+    flash("Removed from loadout.", "info")
+    return redirect(url_for("loadout_detail", loadout_id=loadout_id))
 
 
 def _planned_view(label, checkpoint):

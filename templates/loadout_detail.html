@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ loadout.name }}{% endblock %}
+{% block content %}
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/loadouts">Loadouts</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ loadout.name }}</li>
+  </ol></nav>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div><h1 class="h2 mb-0">{{ loadout.name }}</h1><div class="text-muted">{{ loadout.trip_type }}</div></div>
+    <div class="d-flex gap-2">
+      <form method="post" action="/loadouts/{{ loadout.id }}/copy">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-secondary btn-sm" type="submit">Copy</button></form>
+      <form method="post" action="/loadouts/{{ loadout.id }}/delete" onsubmit="return confirm('Delete ' + {{ loadout.name | tojson | forceescape }} + '?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger btn-sm" type="submit">Delete</button></form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-4"><div class="border rounded p-3"><div class="small text-muted">Total pack weight</div>
+      <div class="fs-4 fw-semibold" id="total-weight">{{ total_oz | weight }}</div>
+      <div class="small text-muted">{{ total_count }} item{{ '' if total_count == 1 else 's' }} packed</div></div></div>
+    <div class="col-12 col-md-8"><div class="border rounded p-3"><div class="small text-muted mb-1">Weight by category</div>
+      {% if totals %}
+        {% for t in totals %}
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <div style="width:7rem" class="small">{{ t.category }}</div>
+          <div class="progress flex-grow-1" style="height:.9rem" role="progressbar" aria-label="{{ t.category }} share of weight">
+            <div class="progress-bar" style="width: {{ (100 * t.oz / total_oz) | round(1) }}%"></div></div>
+          <div class="small text-end" style="width:6.5rem">{{ t.oz | weight }}</div>
+        </div>
+        {% endfor %}
+      {% else %}<span class="text-muted small">Nothing packed yet.</span>{% endif %}
+    </div></div>
+  </div>
+
+  <h2 class="h5">Add gear</h2>
+  {% if gear_choices %}
+  <form class="row g-2 mb-4 align-items-end" method="post" action="/loadouts/{{ loadout.id }}/items" id="add-item">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-12 col-md-6"><label class="form-label small" for="gear_item_id">Gear item</label>
+      <select class="form-select" id="gear_item_id" name="gear_item_id" required>
+        <option value="">Choose from your gear library...</option>
+        {% for c in gear_choices %}<option value="{{ c.id }}">{{ c.name }} ({{ c.category }}, {{ c.weight_oz | weight }})</option>{% endfor %}
+      </select></div>
+    <div class="col-4 col-md-2"><label class="form-label small" for="qty">Qty</label>
+      <input class="form-control" id="qty" name="qty" type="number" min="1" max="{{ max_qty }}" value="1" required></div>
+    <div class="col-8 col-md-2"><button class="btn btn-primary w-100" type="submit">Add</button></div>
+  </form>
+  {% else %}
+  <div class="alert alert-secondary">Your gear library is empty. <a href="/gear">Add some gear</a> first, then come back.</div>
+  {% endif %}
+
+  {% if items %}
+  <div class="table-responsive"><table class="table align-middle">
+    <thead><tr><th>Item</th><th>Category</th><th class="text-end">Each</th><th style="width:9rem">Qty</th><th class="text-end">Line weight</th><th></th></tr></thead>
+    <tbody>
+    {% for i in items %}
+      <tr>
+        <td>{{ i.name }}</td><td>{{ i.category }}</td><td class="text-end">{{ i.weight_oz | weight }}</td>
+        <td><form class="d-flex gap-1" method="post" action="/loadouts/{{ loadout.id }}/items/{{ i.gear_item_id }}/qty">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input class="form-control form-control-sm" name="qty" type="number" min="1" max="{{ max_qty }}" value="{{ i.qty }}" aria-label="Quantity of {{ i.name }}">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Set</button></form></td>
+        <td class="text-end">{{ i.line_oz | weight }}</td>
+        <td class="text-end"><form class="d-inline" method="post" action="/loadouts/{{ loadout.id }}/items/{{ i.gear_item_id }}/remove">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% endif %}
+
+  <h2 class="h5 mt-4">Rename or change trip type</h2>
+  <form class="row g-2 align-items-end" method="post" action="/loadouts/{{ loadout.id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-12 col-md-5"><label class="form-label small" for="ename">Name</label>
+      <input class="form-control" id="ename" name="name" value="{{ form.name }}" maxlength="100" required></div>
+    <div class="col-8 col-md-4"><label class="form-label small" for="etype">Trip type</label>
+      <select class="form-select" id="etype" name="trip_type" required>
+        {% for t in trip_types %}<option value="{{ t }}"{% if t == form.trip_type %} selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select></div>
+    <div class="col-4 col-md-3"><button class="btn btn-outline-primary w-100" type="submit">Save</button></div>
+  </form>
+{% endblock %}

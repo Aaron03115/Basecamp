@@ -78,6 +78,9 @@ Use a different test database with `TEST_DATABASE_URL=postgresql://... ` (its na
 | `/signup`, `/login`, `/logout` | Accounts. Passwords are stored hashed (never in plain text), forms carry a CSRF token, and logging in starts a fresh session. |
 | `/gear` | Your personal gear library (login required): add, edit and delete items with a name, category and weight (oz, lb, g or kg), a total weight with a per-category breakdown, and a category filter. You can only see and change your own items. |
 
+| `/loadouts` | Loadout builder (login required): create named, reusable packing lists with a trip type. |
+| `/loadouts/<id>` | Add items from your gear library with quantities, change quantities, remove items, rename, copy or delete the loadout. Total pack weight and a per-category breakdown are computed automatically from the current gear weights. |
+
 The navbar links to every planned page. Pages not built yet show a "planned for Checkpoint N"
 placeholder instead of a 404. When you build a real page, add its route and remove its
 `checkpoint` entry from `PAGES` in `app.py`.

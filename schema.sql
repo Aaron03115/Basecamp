@@ -68,3 +68,11 @@ DELETE FROM objectives o
    AND NOT EXISTS (SELECT 1 FROM trips t WHERE t.objective_id = o.id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS objectives_name_key ON objectives (name);
+
+-- Checkpoint 4: loadout quantities must be 1 or more (safe to re-run).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'loadout_items_qty_positive') THEN
+        ALTER TABLE loadout_items ADD CONSTRAINT loadout_items_qty_positive CHECK (qty >= 1);
+    END IF;
+END $$;
