@@ -9,6 +9,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
     <div><h1 class="h2 mb-0">{{ loadout.name }}</h1><div class="text-muted">{{ loadout.trip_type }}</div></div>
     <div class="d-flex gap-2">
+      <a class="btn btn-primary btn-sm" href="/trips/plan?loadout={{ loadout.id }}">Plan a trip with this loadout</a>
       <form method="post" action="/loadouts/{{ loadout.id }}/copy">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-outline-secondary btn-sm" type="submit">Copy</button></form>

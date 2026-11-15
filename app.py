@@ -1,3 +1,4 @@
+import datetime
 import functools
 import hmac
 import json
@@ -8,7 +9,8 @@ from urllib.parse import urlencode
 
 import psycopg
 from flask import (
-    Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for,
+    Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, session,
+    url_for,
 )
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
@@ -46,8 +48,8 @@ PAGES = [
     {"path": "/objectives", "label": "Objectives"},
     {"path": "/gear", "label": "Gear Library"},
     {"path": "/loadouts", "label": "Loadout Builder"},
-    {"path": "/trips/plan", "label": "Plan a Trip", "checkpoint": 5},
-    {"path": "/trips", "label": "My Trips", "checkpoint": 5},
+    {"path": "/trips/plan", "label": "Plan a Trip"},
+    {"path": "/trips", "label": "My Trips"},
     {"path": "/summit-log", "label": "Summit Log", "checkpoint": 7},
 ]
 
@@ -60,6 +62,10 @@ TRIP_TYPES = [
     "Peak climb", "Winter / snow", "Other",
 ]
 MAX_QTY = 99
+MAX_NOTES = 2000
+TRIP_STATUSES = ['planned', 'attempted', 'completed']
+TRIP_SORTS = {'newest': 'DESC', 'oldest': 'ASC'}
+EARLIEST_TRIP_DATE = datetime.date(2000, 1, 1)
 WEIGHT_UNITS = {"oz": 1.0, "lb": 16.0, "g": 0.03527396195, "kg": 35.27396195}
 MAX_WEIGHT_OZ = 10000
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -242,7 +248,15 @@ def objective_detail(objective_id):
             (objective_id,),
         )
         reports = cur.fetchall()
-    return render_template("objective_detail.html", o=objective, reports=reports)
+        my_trips = []
+        if g.user:
+            cur.execute(
+                "SELECT id, trip_date, status FROM trips WHERE user_id = %s AND objective_id = %s "
+                "ORDER BY trip_date DESC NULLS LAST, id DESC",
+                (g.user["id"], objective_id),
+            )
+            my_trips = cur.fetchall()
+    return render_template("objective_detail.html", o=objective, reports=reports, my_trips=my_trips)
 
 
 @app.errorhandler(404)
@@ -763,6 +777,281 @@ def loadout_remove_item(loadout_id, gear_id):
     db.commit()
     flash("Removed from loadout.", "info")
     return redirect(url_for("loadout_detail", loadout_id=loadout_id))
+
+
+# ---------------------------------------------------------------------------
+# Trips: plan a trip (objective + loadout + date + notes) and list your trips
+# ---------------------------------------------------------------------------
+def pretty_date(value):
+    """'2026-07-12' -> 'Sun, Jul 12, 2026'. Anything unparseable is shown as stored."""
+    try:
+        d = datetime.date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return value or "No date"
+    return d.strftime("%a, %b ") + str(d.day) + d.strftime(", %Y")
+
+
+app.jinja_env.filters["pretty_date"] = pretty_date
+
+
+def parse_trip_form(form):
+    """Validate the plan-a-trip form. Returns (clean values, errors).
+
+    Values keep the raw strings for re-showing the form; the ids are checked against
+    the database by the caller."""
+    errors = []
+    objective_raw = form.get("objective_id", "").strip()
+    loadout_raw = form.get("loadout_id", "").strip()
+    date_raw = form.get("trip_date", "").strip()
+    notes = form.get("notes", "").strip()
+
+    objective_id = int(objective_raw) if objective_raw.isdigit() and len(objective_raw) < 10 else None
+    if objective_id is None:
+        errors.append("Choose an objective.")
+
+    loadout_id = None
+    if loadout_raw:
+        if loadout_raw.isdigit() and len(loadout_raw) < 10:
+            loadout_id = int(loadout_raw)
+        else:
+            errors.append("Choose one of your loadouts, or leave it blank.")
+
+    trip_date = None
+    if not date_raw:
+        errors.append("Pick a trip date.")
+    else:
+        try:
+            trip_date = datetime.date.fromisoformat(date_raw)
+        except ValueError:
+            errors.append("Enter the date as year-month-day, like 2026-07-12.")
+        else:
+            latest = datetime.date.today() + datetime.timedelta(days=365 * 5)
+            if not EARLIEST_TRIP_DATE <= trip_date <= latest:
+                errors.append("Pick a date between 2000 and five years from now.")
+
+    if len(notes) > MAX_NOTES:
+        errors.append(f"Notes can be up to {MAX_NOTES} characters.")
+
+    values = {"objective_id": objective_id, "loadout_id": loadout_id,
+              "trip_date": date_raw, "notes": notes}
+    return values, errors, trip_date
+
+
+def trip_form_context(values):
+    with get_db().cursor() as cur:
+        cur.execute("SELECT id, name, region, elevation_ft FROM objectives ORDER BY region, name")
+        objectives = cur.fetchall()
+        cur.execute("SELECT id, name, trip_type FROM loadouts WHERE user_id = %s ORDER BY name, id",
+                    (g.user["id"],))
+        loadouts = cur.fetchall()
+    return {"objectives": objectives, "loadouts": loadouts, "form": values,
+            "today": datetime.date.today().isoformat(), "max_notes": MAX_NOTES}
+
+
+@app.route("/trips/plan", methods=["GET", "POST"])
+@login_required
+def trip_plan():
+    if request.method == "POST":
+        values, errors, trip_date = parse_trip_form(request.form)
+        if not errors:
+            with get_db().cursor() as cur:
+                cur.execute("SELECT id, name FROM objectives WHERE id = %s", (values["objective_id"],))
+                objective = cur.fetchone()
+                if objective is None:
+                    errors.append("That objective does not exist.")
+                if values["loadout_id"] is not None:
+                    cur.execute("SELECT id FROM loadouts WHERE id = %s AND user_id = %s",
+                                (values["loadout_id"], g.user["id"]))
+                    if cur.fetchone() is None:
+                        errors.append("Choose one of your loadouts, or leave it blank.")
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return render_template("trip_plan.html", **trip_form_context(values)), 400
+        if not request.form.get("confirm_duplicate"):
+            with get_db().cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM trips WHERE user_id = %s AND objective_id = %s AND trip_date = %s",
+                    (g.user["id"], values["objective_id"], trip_date.isoformat()),
+                )
+                duplicate = cur.fetchone()["n"] > 0
+            if duplicate:
+                # Ask before saving the same objective on the same day twice.
+                context = trip_form_context(values)
+                context.update(duplicate=True, duplicate_name=objective["name"])
+                return render_template("trip_plan.html", **context)
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO trips (user_id, objective_id, loadout_id, trip_date, status, notes) "
+                "VALUES (%s, %s, %s, %s, 'planned', %s)",
+                (g.user["id"], values["objective_id"], values["loadout_id"],
+                 trip_date.isoformat(), values["notes"] or None),
+            )
+        db.commit()
+        flash(f"Trip to {objective['name']} planned for {pretty_date(trip_date.isoformat())}.", "success")
+        return redirect(url_for("trips"))
+
+    # GET: links such as /trips/plan?objective=5 (from an objective page) pre-fill the form.
+    pre_objective = request.args.get("objective", "")
+    pre_loadout = request.args.get("loadout", "")
+    values = {
+        "objective_id": int(pre_objective) if pre_objective.isdigit() and len(pre_objective) < 10 else None,
+        "loadout_id": int(pre_loadout) if pre_loadout.isdigit() and len(pre_loadout) < 10 else None,
+        "trip_date": "", "notes": "",
+    }
+    return render_template("trip_plan.html", **trip_form_context(values))
+
+
+@app.route("/trips")
+@login_required
+def trips():
+    status = request.args.get("status", "")
+    if status not in TRIP_STATUSES:
+        status = ""
+    sort = request.args.get("sort", "newest")
+    if sort not in TRIP_SORTS:
+        sort = "newest"
+    where, params = "WHERE t.user_id = %s", [g.user["id"]]
+    if status:
+        where += " AND t.status = %s"
+        params.append(status)
+    direction = TRIP_SORTS[sort]  # from a fixed dict, never from user text
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT t.id, t.trip_date, t.status, t.notes, "
+            "o.id AS objective_id, o.name AS objective_name, o.region, o.elevation_ft, "
+            "l.id AS loadout_id, l.name AS loadout_name, "
+            "(SELECT COALESCE(SUM(gi.weight_oz * li.qty), 0) FROM loadout_items li "
+            " JOIN gear_items gi ON gi.id = li.gear_item_id WHERE li.loadout_id = l.id) AS pack_oz "
+            "FROM trips t JOIN objectives o ON o.id = t.objective_id "
+            "LEFT JOIN loadouts l ON l.id = t.loadout_id "
+            + where + " ORDER BY t.trip_date " + direction + " NULLS LAST, t.id " + direction,
+            params,
+        )
+        rows = cur.fetchall()
+        cur.execute("SELECT COUNT(*) AS n FROM trips WHERE user_id = %s", (g.user["id"],))
+        all_count = cur.fetchone()["n"]
+    return render_template("trips.html", trips=rows, status=status, sort=sort,
+                           statuses=TRIP_STATUSES, all_count=all_count)
+
+
+def get_own_trip_or_404(trip_id):
+    """The trip with its objective and loadout names, or 404 if it is not yours."""
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT t.id, t.trip_date, t.status, t.notes, "
+            "o.id AS objective_id, o.name AS objective_name, o.region, o.lat, o.lng, "
+            "l.id AS loadout_id, l.name AS loadout_name "
+            "FROM trips t JOIN objectives o ON o.id = t.objective_id "
+            "LEFT JOIN loadouts l ON l.id = t.loadout_id "
+            "WHERE t.id = %s AND t.user_id = %s",
+            (trip_id, g.user["id"]),
+        )
+        trip = cur.fetchone()
+    if trip is None:
+        abort(404)
+    return trip
+
+
+@app.route("/trips/<int:trip_id>/checklist")
+@login_required
+def trip_checklist(trip_id):
+    """Printable packing checklist for a trip's loadout."""
+    trip = get_own_trip_or_404(trip_id)
+    items, total_oz = [], 0
+    if trip["loadout_id"]:
+        with get_db().cursor() as cur:
+            cur.execute(
+                "SELECT li.qty, gi.name, gi.category, gi.weight_oz, gi.weight_oz * li.qty AS line_oz "
+                "FROM loadout_items li JOIN gear_items gi ON gi.id = li.gear_item_id "
+                "WHERE li.loadout_id = %s ORDER BY gi.category, gi.name",
+                (trip["loadout_id"],),
+            )
+            items = cur.fetchall()
+        total_oz = sum(i["line_oz"] for i in items)
+    return render_template("trip_checklist.html", trip=trip, items=items, total_oz=total_oz,
+                           total_count=sum(i["qty"] for i in items))
+
+
+def ics_escape(text):
+    """Escape text for an iCalendar value (RFC 5545 section 3.3.11)."""
+    text = text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+
+
+def ics_fold(line):
+    """Fold a content line to at most 75 octets per physical line, never splitting a character."""
+    out, current, size = [], "", 0
+    for ch in line:
+        n = len(ch.encode("utf-8"))
+        if size + n > (75 if not out else 74):
+            out.append(current)
+            current, size = "", 0
+        current += ch
+        size += n
+    out.append(current)
+    return "\r\n ".join(out)
+
+
+def build_trip_ics(trip):
+    day = datetime.date.fromisoformat(trip["trip_date"])
+    description = []
+    if trip["loadout_name"]:
+        description.append("Loadout: " + trip["loadout_name"])
+    if trip["notes"]:
+        description.append(trip["notes"])
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Basecamp//Trip planner//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:basecamp-trip-{trip['id']}@basecamp",
+        "DTSTAMP:" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        "DTSTART;VALUE=DATE:" + day.strftime("%Y%m%d"),
+        "DTEND;VALUE=DATE:" + (day + datetime.timedelta(days=1)).strftime("%Y%m%d"),
+        "SUMMARY:" + ics_escape("Basecamp: " + trip["objective_name"]),
+        "LOCATION:" + ics_escape(f"{trip['objective_name']}, {trip['region']}"),
+    ]
+    if trip["lat"] is not None and trip["lng"] is not None:
+        lines.append(f"GEO:{trip['lat']:.5f};{trip['lng']:.5f}")
+    if description:
+        lines.append("DESCRIPTION:" + ics_escape("\n".join(description)))
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "".join(ics_fold(line) + "\r\n" for line in lines)
+
+
+@app.route("/trips/<int:trip_id>/calendar.ics")
+@login_required
+def trip_calendar(trip_id):
+    trip = get_own_trip_or_404(trip_id)
+    try:
+        body = build_trip_ics(trip)
+    except (TypeError, ValueError):
+        abort(404)  # a trip without a usable date cannot be put on a calendar
+    slug = re.sub(r"[^a-z0-9]+", "-", trip["objective_name"].lower()).strip("-") or "trip"
+    return Response(
+        body, mimetype="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="basecamp-{slug}-{trip["trip_date"]}.ics"'},
+    )
+
+
+@app.route("/trips/<int:trip_id>/delete", methods=["POST"])
+@login_required
+def trip_delete(trip_id):
+    with get_db().cursor() as cur:
+        cur.execute(
+            "SELECT t.id, o.name FROM trips t JOIN objectives o ON o.id = t.objective_id "
+            "WHERE t.id = %s AND t.user_id = %s",
+            (trip_id, g.user["id"]),
+        )
+        trip = cur.fetchone()
+    if trip is None:
+        abort(404)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM trips WHERE id = %s AND user_id = %s", (trip_id, g.user["id"]))
+    db.commit()
+    flash(f"Removed your trip to {trip['name']}.", "info")
+    return redirect(url_for("trips"))
 
 
 def _planned_view(label, checkpoint):

@@ -18,6 +18,24 @@
   <h2 class="h5">Season and conditions notes</h2>
   <p>{{ o.season_notes or "No notes yet." }}</p>
 
+  {% if current_user %}
+  <h2 class="h5 mt-4">Your trips here</h2>
+  {% if my_trips %}
+    <p id="my-trips-summary">You have {{ my_trips | length }} trip{{ '' if my_trips | length == 1 else 's' }} to {{ o.name }}.</p>
+    <ul class="list-group mb-3">
+    {% for t in my_trips %}
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span>{{ t.trip_date | pretty_date }}</span>
+        <span class="badge {% if t.status == 'completed' %}text-bg-success{% elif t.status == 'attempted' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ t.status | capitalize }}</span>
+      </li>
+    {% endfor %}
+    </ul>
+    <a class="small" href="/trips">See all in My Trips</a>
+  {% else %}
+    <p class="text-muted">You have not planned a trip here yet.</p>
+  {% endif %}
+  {% endif %}
+
   <h2 class="h5 mt-4">Recent trip reports</h2>
   {% if reports %}
     <ul class="list-group mb-4">

@@ -81,6 +81,14 @@ Use a different test database with `TEST_DATABASE_URL=postgresql://... ` (its na
 | `/loadouts` | Loadout builder (login required): create named, reusable packing lists with a trip type. |
 | `/loadouts/<id>` | Add items from your gear library with quantities, change quantities, remove items, rename, copy or delete the loadout. Total pack weight and a per-category breakdown are computed automatically from the current gear weights. |
 
+| `/trips/plan` | Plan a trip (login required): choose an objective, optionally one of your loadouts, a date and notes. Saved with status "planned". Objective and loadout pages link here with that choice pre-selected. If you already have a trip to the same objective on the same date, it asks you to confirm before saving a second one. |
+| `/trips` | My Trips: your trips with objective, loadout and its pack weight, status and notes. Filter by status, sort by date (newest or oldest first), and remove a trip. |
+| `/trips/<id>/checklist` | Printable packing checklist for a trip: the loadout's items grouped by category with checkboxes, quantities, weights and the total. Use the browser's print button. |
+| `/trips/<id>/calendar.ics` | Downloads the trip as an all-day calendar event (works with Google, Apple and Outlook calendars). |
+
+The objective page also shows "Your trips here" for the logged-in user, and each loadout page has a
+"Plan a trip with this loadout" button.
+
 The navbar links to every planned page. Pages not built yet show a "planned for Checkpoint N"
 placeholder instead of a 404. When you build a real page, add its route and remove its
 `checkpoint` entry from `PAGES` in `app.py`.

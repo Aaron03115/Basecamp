@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Packing checklist{% endblock %}
+{% block content %}
+  <div class="d-print-none mb-3">
+    <a href="/trips">&larr; My Trips</a>
+    <button class="btn btn-primary btn-sm ms-3" type="button" onclick="window.print()">Print checklist</button>
+  </div>
+  <h1 class="h3 mb-0">Packing checklist: {{ trip.objective_name }}</h1>
+  <div class="text-muted mb-3">{{ trip.trip_date | pretty_date }}{% if trip.loadout_name %} &middot; Loadout: {{ trip.loadout_name }}{% endif %}</div>
+
+  {% if not trip.loadout_id %}
+    <div class="alert alert-secondary">This trip has no loadout attached, so there is nothing to pack yet. <a href="/loadouts">Build a loadout</a> and choose it when you plan your next trip.</div>
+  {% elif not items %}
+    <div class="alert alert-secondary">The loadout <a href="/loadouts/{{ trip.loadout_id }}">{{ trip.loadout_name }}</a> has no gear in it yet.</div>
+  {% else %}
+    <p class="fw-semibold" id="checklist-total">Total pack weight: {{ total_oz | weight }} ({{ total_count }} item{{ '' if total_count == 1 else 's' }})</p>
+    {% for category, group in items | groupby('category') %}
+    <h2 class="h6 mt-3 border-bottom pb-1">{{ category }}</h2>
+    <ul class="list-unstyled mb-0">
+      {% for i in group %}
+      <li class="py-1"><label class="d-flex align-items-center gap-2">
+        <input class="form-check-input mt-0" type="checkbox">
+        <span class="flex-grow-1">{{ i.name }}{% if i.qty > 1 %} <span class="text-muted">&times; {{ i.qty }}</span>{% endif %}</span>
+        <span class="text-muted small">{{ i.line_oz | weight }}</span>
+      </label></li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+  {% endif %}
+  {% if trip.notes %}<h2 class="h6 mt-4 border-bottom pb-1">Trip notes</h2><p style="white-space: pre-wrap">{{ trip.notes }}</p>{% endif %}
+{% endblock %}

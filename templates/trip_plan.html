@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Plan a Trip{% endblock %}
+{% block content %}
+<div class="row"><div class="col-lg-8">
+  <h1 class="h2 mb-1">Plan a Trip</h1>
+  <p class="text-muted">Pick an objective, attach a loadout, and choose a date. The trip is saved as <em>planned</em>.</p>
+
+  {% if duplicate %}
+  <div class="alert alert-warning" role="alert" id="duplicate-warning">
+    <strong>You already have a trip to {{ duplicate_name }} on this date.</strong>
+    Save it anyway, or change the date or objective below.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/trips/plan" id="plan-trip">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if duplicate %}<input type="hidden" name="confirm_duplicate" value="1">{% endif %}
+    <div class="mb-3"><label class="form-label" for="objective_id">Objective</label>
+      <select class="form-select" id="objective_id" name="objective_id" required>
+        <option value="">Choose a peak or route...</option>
+        {% for region, group in objectives | groupby('region') %}
+        <optgroup label="{{ region }}">
+          {% for o in group %}<option value="{{ o.id }}"{% if o.id == form.objective_id %} selected{% endif %}>{{ o.name }}{% if o.elevation_ft %} ({{ "{:,}".format(o.elevation_ft) }} ft){% endif %}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <div class="form-text">Not sure which? <a href="/objectives">Browse objectives</a>.</div></div>
+
+    <div class="mb-3"><label class="form-label" for="loadout_id">Loadout</label>
+      <select class="form-select" id="loadout_id" name="loadout_id">
+        <option value="">No loadout yet</option>
+        {% for l in loadouts %}<option value="{{ l.id }}"{% if l.id == form.loadout_id %} selected{% endif %}>{{ l.name }} ({{ l.trip_type }})</option>{% endfor %}
+      </select>
+      <div class="form-text">{% if loadouts %}Optional. Weight totals come from the loadout.{% else %}You have no loadouts yet. <a href="/loadouts">Build one</a>, or plan without one.{% endif %}</div></div>
+
+    <div class="mb-3"><label class="form-label" for="trip_date">Date</label>
+      <input class="form-control" id="trip_date" name="trip_date" type="date" value="{{ form.trip_date }}" min="2000-01-01" required>
+      <div class="form-text">Today is {{ today }}. Past dates are fine if you are logging an earlier trip.</div></div>
+
+    <div class="mb-3"><label class="form-label" for="notes">Notes</label>
+      <textarea class="form-control" id="notes" name="notes" rows="4" maxlength="{{ max_notes }}" placeholder="Route, partners, alpine start time, backup plan...">{{ form.notes }}</textarea></div>
+
+    <button class="btn {% if duplicate %}btn-warning{% else %}btn-primary{% endif %}" type="submit">{% if duplicate %}Save anyway{% else %}Save trip{% endif %}</button>
+    <a class="btn btn-outline-secondary" href="/trips">Cancel</a>
+  </form>
+</div></div>
+{% endblock %}
