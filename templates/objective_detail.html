@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ o.name }}{% endblock %}
+{% block head %}
+  {% if o.lat is not none %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endif %}
+{% endblock %}
 {% block content %}
   <nav aria-label="breadcrumb"><ol class="breadcrumb">
     <li class="breadcrumb-item"><a href="/objectives">Objectives</a></li>
@@ -14,6 +17,11 @@
     <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Best season</div><div class="fw-semibold">{{ o.best_season or "-" }}</div></div></div>
     <div class="col-6 col-md-3"><div class="border rounded p-3"><div class="small text-muted">Coordinates</div><div class="fw-semibold">{% if o.lat is not none %}{{ "%.4f"|format(o.lat) }}, {{ "%.4f"|format(o.lng) }}{% else %}-{% endif %}</div></div></div>
   </div>
+
+  {% if o.lat is not none %}
+  <div id="objective-map" class="border rounded mb-4" style="height: 280px" role="img" aria-label="Map showing {{ o.name }}"
+       data-lat="{{ o.lat }}" data-lng="{{ o.lng }}" data-name="{{ o.name }}"></div>
+  {% endif %}
 
   <h2 class="h5">Season and conditions notes</h2>
   <p>{{ o.season_notes or "No notes yet." }}</p>
@@ -36,7 +44,7 @@
   {% endif %}
   {% endif %}
 
-  <h2 class="h5 mt-4">Recent trip reports</h2>
+  <h2 class="h5 mt-4">Recent trip reports <span class="small text-muted fw-normal">(shared anonymously by climbers)</span></h2>
   {% if reports %}
     <ul class="list-group mb-4">
     {% for r in reports %}
@@ -53,4 +61,24 @@
   <a class="btn btn-primary" href="/trips/plan?objective={{ o.id }}">Plan a trip here</a>
   <a class="btn btn-outline-secondary" href="/objectives">Back to objectives</a>
   <p class="small text-muted mt-4">Safety: conditions change quickly. Treat these notes as a starting point, not a forecast.</p>
+{% endblock %}
+{% block scripts %}
+  {% if o.lat is not none %}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    (function () {
+      var el = document.getElementById("objective-map");
+      if (!el || typeof L === "undefined") { return; }  // map is a bonus; the page works without it
+      var lat = parseFloat(el.dataset.lat), lng = parseFloat(el.dataset.lng);
+      var map = L.map(el).setView([lat, lng], 12);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 17,
+        attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"
+      }).addTo(map);
+      var label = document.createElement("span");
+      label.textContent = el.dataset.name;  // textContent, so a peak name can never inject HTML
+      L.marker([lat, lng]).addTo(map).bindPopup(label);
+    })();
+  </script>
+  {% endif %}
 {% endblock %}

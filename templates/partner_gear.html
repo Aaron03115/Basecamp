@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ owner_name }}'s gear{% endblock %}
+{% block content %}
+  <div class="mb-3"><a href="/trips/{{ trip_id }}">&larr; Back to the trip to {{ objective_name }}</a></div>
+  <h1 class="h3 mb-1">{{ owner_name }}'s gear</h1>
+  <p class="text-muted">Shared with trip partners. Read-only.</p>
+  {% if items %}
+    <p class="fw-semibold" id="partner-total">Total gear weight: {{ total_oz | weight }} ({{ items | length }} item{{ '' if items | length == 1 else 's' }})</p>
+    {% for category, group in items | groupby('category') %}
+    <h2 class="h6 mt-3 border-bottom pb-1">{{ category }}</h2>
+    <ul class="list-unstyled mb-0">
+      {% for i in group %}<li class="py-1 d-flex justify-content-between"><span>{{ i.name }}</span><span class="text-muted small">{{ i.weight_oz | weight }}</span></li>{% endfor %}
+    </ul>
+    {% endfor %}
+  {% else %}
+    <div class="alert alert-secondary">{{ owner_name }} has not added any gear yet.</div>
+  {% endif %}
+{% endblock %}

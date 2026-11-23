@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Trip to {{ trip.objective_name }}{% endblock %}
+{% block content %}
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/trips">My Trips</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ trip.objective_name }}</li>
+  </ol></nav>
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div>
+      <h1 class="h2 mb-1">{{ trip.objective_name }}
+        <span class="badge fs-6 align-middle {% if trip.status == 'completed' %}text-bg-success{% elif trip.status == 'attempted' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ trip.status | capitalize }}</span></h1>
+      <div class="text-muted">{{ trip.trip_date | pretty_date }} &middot; {{ trip.region }}{% if trip.elevation_ft %} &middot; {{ "{:,}".format(trip.elevation_ft) }} ft{% endif %} &middot; {{ trip.difficulty }}</div>
+      <div class="small mt-1" id="trip-owner">Organized by {{ owner.name }}. You are a trip partner (read-only).</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="/objectives/{{ trip.objective_id }}">Objective page</a>
+      <form method="post" action="/trips/{{ trip.id }}/leave" onsubmit="return confirm('Leave this trip?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger btn-sm" type="submit">Leave trip</button></form>
+    </div>
+  </div>
+
+  {% if trip.notes %}<h2 class="h5">Notes</h2><p style="white-space: pre-wrap">{{ trip.notes }}</p>{% endif %}
+
+  <h2 class="h5 mt-4">Who is going</h2>
+  <ul class="list-group mb-4" id="trip-members">
+    <li class="list-group-item">You</li>
+    {% for m in others %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <span>{{ m.name }}{% if m.is_owner %} <span class="badge text-bg-light border">Organizer</span>{% endif %}</span>
+      {% if m.share_gear %}<a class="btn btn-sm btn-outline-secondary" href="/trips/{{ trip.id }}/partners/{{ m.id }}/gear">View gear</a>
+      {% else %}<span class="small text-muted">Gear not shared</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+{% endblock %}

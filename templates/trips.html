@@ -7,6 +7,36 @@
     <a class="btn btn-primary" href="/trips/plan">Plan a trip</a>
   </div>
 
+  {% if invites %}
+  <h2 class="h5">Trip invitations</h2>
+  <ul class="list-group mb-4" id="trip-invites">
+    {% for i in invites %}
+    <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <span><strong>{{ i.owner_name }}</strong> invited you to <strong>{{ i.objective_name }}</strong> on {{ i.trip_date | pretty_date }}</span>
+      <span class="d-flex gap-2">
+        <form method="post" action="/trips/{{ i.trip_id }}/invite/accept"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-success" type="submit">Join</button></form>
+        <form method="post" action="/trips/{{ i.trip_id }}/invite/decline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Decline</button></form>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if shared %}
+  <h2 class="h5">Trips shared with me</h2>
+  <div class="table-responsive mb-4"><table class="table table-hover align-middle" id="shared-trips">
+    <thead><tr><th>Date</th><th>Objective</th><th>Organizer</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for s in shared %}
+      <tr><td class="text-nowrap">{{ s.trip_date | pretty_date }}</td><td>{{ s.objective_name }}<div class="small text-muted">{{ s.region }}</div></td>
+        <td>{{ s.owner_name }}</td>
+        <td><span class="badge {% if s.status == 'completed' %}text-bg-success{% elif s.status == 'attempted' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ s.status | capitalize }}</span></td>
+        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/trips/{{ s.trip_id }}">Open</a></td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% endif %}
+
+  {% if all_count or shared or invites %}<h2 class="h5">My trips</h2>{% endif %}
   {% if all_count %}
   <form class="row g-2 mb-3 align-items-end" method="get" action="/trips" id="trip-filters">
     <div class="col-6 col-md-3"><label class="form-label small" for="status">Status</label>
@@ -31,12 +61,13 @@
     <tbody>
     {% for t in trips %}
       <tr>
-        <td class="text-nowrap">{{ t.trip_date | pretty_date }}</td>
+        <td class="text-nowrap"><a href="/trips/{{ t.id }}">{{ t.trip_date | pretty_date }}</a></td>
         <td><a href="/objectives/{{ t.objective_id }}">{{ t.objective_name }}</a><div class="small text-muted">{{ t.region }}</div></td>
         <td>{% if t.loadout_id %}<a href="/loadouts/{{ t.loadout_id }}">{{ t.loadout_name }}</a><div class="small text-muted">{{ t.pack_oz | weight }}</div>{% else %}<span class="text-muted">None</span>{% endif %}</td>
         <td><span class="badge {% if t.status == 'completed' %}text-bg-success{% elif t.status == 'attempted' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ t.status | capitalize }}</span></td>
         <td class="small">{{ (t.notes or "") | truncate(80) }}</td>
         <td class="text-end text-nowrap">
+          <a class="btn btn-sm btn-outline-primary" href="/trips/{{ t.id }}">Open</a>
           <a class="btn btn-sm btn-outline-secondary" href="/trips/{{ t.id }}/checklist">Checklist</a>
           <a class="btn btn-sm btn-outline-secondary" href="/trips/{{ t.id }}/calendar.ics" title="Download a calendar file">Calendar</a>
           <form class="d-inline" method="post" action="/trips/{{ t.id }}/delete" onsubmit="return confirm('Remove your trip to ' + {{ t.objective_name | tojson | forceescape }} + '?');">

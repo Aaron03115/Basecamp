@@ -86,6 +86,15 @@ Use a different test database with `TEST_DATABASE_URL=postgresql://... ` (its na
 | `/trips/<id>/checklist` | Printable packing checklist for a trip: the loadout's items grouped by category with checkboxes, quantities, weights and the total. Use the browser's print button. |
 | `/trips/<id>/calendar.ics` | Downloads the trip as an all-day calendar event (works with Google, Apple and Outlook calendars). |
 
+| `/trips/<id>` | Trip detail: status, loadout and pack weight, notes, checklist and calendar links. While a trip is planned you can edit its date, loadout and notes. Move it through the status workflow (planned, attempted, completed; a trip dated in the future cannot be attempted or completed yet). Once attempted or completed you can add conditions reports. |
+
+| `/friends` | Friends (login required): add a friend by exact email, accept or decline requests, unfriend, and a privacy switch for sharing your gear. Asking for a friend never reveals whether an email has an account. |
+| `/trips/<id>/invite` | On your trip's page, invite friends. They answer on My Trips ("Trip invitations") and, once joined, see the trip read-only under "Trips shared with me". |
+| `/trips/<id>/partners/<user>/gear` | A trip partner's gear library, read-only. Only people on the same trip can open it, and only while that person has gear sharing turned on (off by default). Unfriending ends shared trips immediately. |
+
+Conditions reports appear on the objective's page without the author's name. The objective page also
+shows a small map (Leaflet with OpenStreetMap tiles, loaded from a CDN, so it needs internet access).
+
 The objective page also shows "Your trips here" for the logged-in user, and each loadout page has a
 "Plan a trip with this loadout" button.
 

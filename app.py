@@ -50,6 +50,7 @@ PAGES = [
     {"path": "/loadouts", "label": "Loadout Builder"},
     {"path": "/trips/plan", "label": "Plan a Trip"},
     {"path": "/trips", "label": "My Trips"},
+    {"path": "/friends", "label": "Friends"},
     {"path": "/summit-log", "label": "Summit Log", "checkpoint": 7},
 ]
 
@@ -65,6 +66,13 @@ MAX_QTY = 99
 MAX_NOTES = 2000
 TRIP_STATUSES = ['planned', 'attempted', 'completed']
 TRIP_SORTS = {'newest': 'DESC', 'oldest': 'ASC'}
+# Status workflow: which statuses a trip may move to from each status.
+TRIP_TRANSITIONS = {
+    'planned': ['attempted', 'completed'],
+    'attempted': ['completed', 'planned'],
+    'completed': ['attempted'],
+}
+MAX_REPORT = 2000
 EARLIEST_TRIP_DATE = datetime.date(2000, 1, 1)
 WEIGHT_UNITS = {"oz": 1.0, "lb": 16.0, "g": 0.03527396195, "kg": 35.27396195}
 MAX_WEIGHT_OZ = 10000
@@ -932,8 +940,20 @@ def trips():
         rows = cur.fetchall()
         cur.execute("SELECT COUNT(*) AS n FROM trips WHERE user_id = %s", (g.user["id"],))
         all_count = cur.fetchone()["n"]
+        cur.execute(
+            "SELECT p.status AS invite_status, t.id AS trip_id, t.trip_date, t.status, "
+            "o.name AS objective_name, o.region, u.name AS owner_name "
+            "FROM trip_participants p JOIN trips t ON t.id = p.trip_id "
+            "JOIN objectives o ON o.id = t.objective_id JOIN users u ON u.id = t.user_id "
+            "WHERE p.user_id = %s ORDER BY t.trip_date, t.id",
+            (g.user["id"],),
+        )
+        partner_rows = cur.fetchall()
+    invites = [r for r in partner_rows if r["invite_status"] == "invited"]
+    shared = [r for r in partner_rows if r["invite_status"] == "joined"]
     return render_template("trips.html", trips=rows, status=status, sort=sort,
-                           statuses=TRIP_STATUSES, all_count=all_count)
+                           statuses=TRIP_STATUSES, all_count=all_count,
+                           invites=invites, shared=shared)
 
 
 def get_own_trip_or_404(trip_id):
@@ -942,6 +962,7 @@ def get_own_trip_or_404(trip_id):
         cur.execute(
             "SELECT t.id, t.trip_date, t.status, t.notes, "
             "o.id AS objective_id, o.name AS objective_name, o.region, o.lat, o.lng, "
+            "o.elevation_ft, o.difficulty, "
             "l.id AS loadout_id, l.name AS loadout_name "
             "FROM trips t JOIN objectives o ON o.id = t.objective_id "
             "LEFT JOIN loadouts l ON l.id = t.loadout_id "
@@ -952,6 +973,149 @@ def get_own_trip_or_404(trip_id):
     if trip is None:
         abort(404)
     return trip
+
+
+def trip_is_in_future(trip):
+    try:
+        return datetime.date.fromisoformat(trip["trip_date"]) > datetime.date.today()
+    except (TypeError, ValueError):
+        return False
+
+
+def trip_detail_context(trip, form=None):
+    with get_db().cursor() as cur:
+        pack_oz, pack_count = 0, 0
+        if trip["loadout_id"]:
+            cur.execute(
+                "SELECT COALESCE(SUM(gi.weight_oz * li.qty), 0) AS oz, COALESCE(SUM(li.qty), 0) AS n "
+                "FROM loadout_items li JOIN gear_items gi ON gi.id = li.gear_item_id "
+                "WHERE li.loadout_id = %s",
+                (trip["loadout_id"],),
+            )
+            row = cur.fetchone()
+            pack_oz, pack_count = row["oz"], row["n"]
+        cur.execute(
+            "SELECT id, conditions_text, created_at FROM trip_reports "
+            "WHERE trip_id = %s ORDER BY created_at DESC, id DESC",
+            (trip["id"],),
+        )
+        reports = cur.fetchall()
+        cur.execute("SELECT id, name, trip_type FROM loadouts WHERE user_id = %s ORDER BY name, id",
+                    (g.user["id"],))
+        loadouts = cur.fetchall()
+        cur.execute(
+            "SELECT u.id, u.name, u.share_gear, p.status FROM trip_participants p "
+            "JOIN users u ON u.id = p.user_id WHERE p.trip_id = %s ORDER BY p.status, u.name",
+            (trip["id"],),
+        )
+        partners = cur.fetchall()
+        invitable = [f for f in friends_of(cur, g.user["id"]) if f["id"] not in {p["id"] for p in partners}]
+    return {
+        "partners": partners, "invitable_friends": invitable,
+        "trip": trip, "pack_oz": pack_oz, "pack_count": pack_count, "reports": reports,
+        "loadouts": loadouts, "next_statuses": TRIP_TRANSITIONS[trip["status"]],
+        "can_edit": trip["status"] == "planned", "can_report": trip["status"] != "planned",
+        "in_future": trip_is_in_future(trip), "max_notes": MAX_NOTES, "max_report": MAX_REPORT,
+        "form": form or {"loadout_id": trip["loadout_id"], "trip_date": trip["trip_date"],
+                         "notes": trip["notes"] or ""},
+    }
+
+
+@app.route("/trips/<int:trip_id>")
+@login_required
+def trip_detail(trip_id):
+    with get_db().cursor() as cur:
+        cur.execute("SELECT user_id FROM trips WHERE id = %s", (trip_id,))
+        row = cur.fetchone()
+    if row is not None and row["user_id"] != g.user["id"]:
+        return partner_trip_view(trip_id)  # not yours: only joined partners get in (else 404)
+    trip = get_own_trip_or_404(trip_id)
+    return render_template("trip_detail.html", **trip_detail_context(trip))
+
+
+@app.route("/trips/<int:trip_id>/edit", methods=["POST"])
+@login_required
+def trip_edit(trip_id):
+    trip = get_own_trip_or_404(trip_id)
+    if trip["status"] != "planned":
+        flash("Only planned trips can be edited. Move it back to planned first.", "warning")
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+    data = request.form.to_dict()
+    data["objective_id"] = str(trip["objective_id"])  # the objective is fixed once a trip exists
+    values, errors, trip_date = parse_trip_form(data)
+    if not errors and values["loadout_id"] is not None:
+        with get_db().cursor() as cur:
+            cur.execute("SELECT id FROM loadouts WHERE id = %s AND user_id = %s",
+                        (values["loadout_id"], g.user["id"]))
+            if cur.fetchone() is None:
+                errors.append("Choose one of your loadouts, or leave it blank.")
+    if errors:
+        for e in errors:
+            flash(e, "danger")
+        form = {"loadout_id": values["loadout_id"], "trip_date": values["trip_date"], "notes": values["notes"]}
+        return render_template("trip_detail.html", **trip_detail_context(trip, form)), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE trips SET loadout_id = %s, trip_date = %s, notes = %s WHERE id = %s AND user_id = %s",
+            (values["loadout_id"], trip_date.isoformat(), values["notes"] or None, trip_id, g.user["id"]),
+        )
+    db.commit()
+    flash("Trip updated.", "success")
+    return redirect(url_for("trip_detail", trip_id=trip_id))
+
+
+@app.route("/trips/<int:trip_id>/status", methods=["POST"])
+@login_required
+def trip_set_status(trip_id):
+    trip = get_own_trip_or_404(trip_id)
+    new_status = request.form.get("status", "")
+    if new_status not in TRIP_TRANSITIONS[trip["status"]]:
+        flash(f"A {trip['status']} trip cannot be moved to '{new_status or 'nothing'}'.", "danger")
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+    if new_status in ("attempted", "completed") and trip_is_in_future(trip):
+        flash("This trip is dated in the future, so it cannot be attempted or completed yet. "
+              "Edit the date first if it already happened.", "danger")
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("UPDATE trips SET status = %s WHERE id = %s AND user_id = %s",
+                    (new_status, trip_id, g.user["id"]))
+    db.commit()
+    flash(f"Trip marked {new_status}.", "success")
+    return redirect(url_for("trip_detail", trip_id=trip_id))
+
+
+@app.route("/trips/<int:trip_id>/reports", methods=["POST"])
+@login_required
+def trip_add_report(trip_id):
+    trip = get_own_trip_or_404(trip_id)
+    text = request.form.get("conditions_text", "").strip()
+    if trip["status"] == "planned":
+        flash("Mark the trip attempted or completed before writing a conditions report.", "warning")
+    elif not text:
+        flash("Write a few words about the conditions.", "danger")
+    elif len(text) > MAX_REPORT:
+        flash(f"Reports can be up to {MAX_REPORT} characters.", "danger")
+    else:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute("INSERT INTO trip_reports (trip_id, conditions_text) VALUES (%s, %s)", (trip_id, text))
+        db.commit()
+        flash("Conditions report added.", "success")
+    return redirect(url_for("trip_detail", trip_id=trip_id))
+
+
+@app.route("/trips/<int:trip_id>/reports/<int:report_id>/delete", methods=["POST"])
+@login_required
+def trip_delete_report(trip_id, report_id):
+    get_own_trip_or_404(trip_id)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM trip_reports WHERE id = %s AND trip_id = %s", (report_id, trip_id))
+    db.commit()
+    flash("Report removed.", "info")
+    return redirect(url_for("trip_detail", trip_id=trip_id))
 
 
 @app.route("/trips/<int:trip_id>/checklist")
@@ -1052,6 +1216,285 @@ def trip_delete(trip_id):
     db.commit()
     flash(f"Removed your trip to {trip['name']}.", "info")
     return redirect(url_for("trips"))
+
+
+# ---------------------------------------------------------------------------
+# Friends, trip partners, and gear sharing
+# ---------------------------------------------------------------------------
+def friends_of(cur, user_id):
+    """Accepted friends of a user: [{id, name, email, friendship_id}]."""
+    cur.execute(
+        "SELECT u.id, u.name, u.email, f.id AS friendship_id FROM friendships f "
+        "JOIN users u ON u.id = CASE WHEN f.requester_id = %s THEN f.addressee_id ELSE f.requester_id END "
+        "WHERE f.status = 'accepted' AND (f.requester_id = %s OR f.addressee_id = %s) ORDER BY u.name, u.id",
+        (user_id, user_id, user_id),
+    )
+    return cur.fetchall()
+
+
+@app.route("/friends")
+@login_required
+def friends():
+    me = g.user["id"]
+    with get_db().cursor() as cur:
+        friend_list = friends_of(cur, me)
+        cur.execute(
+            "SELECT f.id AS friendship_id, u.name, u.email FROM friendships f "
+            "JOIN users u ON u.id = f.requester_id WHERE f.addressee_id = %s AND f.status = 'pending' "
+            "ORDER BY f.id",
+            (me,),
+        )
+        incoming = cur.fetchall()
+        cur.execute(
+            "SELECT f.id AS friendship_id, u.name, u.email FROM friendships f "
+            "JOIN users u ON u.id = f.addressee_id WHERE f.requester_id = %s AND f.status = 'pending' "
+            "ORDER BY f.id",
+            (me,),
+        )
+        outgoing = cur.fetchall()
+        cur.execute("SELECT share_gear FROM users WHERE id = %s", (me,))
+        share_gear = cur.fetchone()["share_gear"]
+    return render_template("friends.html", friends=friend_list, incoming=incoming,
+                           outgoing=outgoing, share_gear=share_gear)
+
+
+@app.route("/friends/request", methods=["POST"])
+@login_required
+def friend_request():
+    email = request.form.get("email", "").strip().lower()
+    if not EMAIL_RE.match(email) or len(email) > 200:
+        flash("Enter a valid email address.", "danger")
+        return redirect(url_for("friends"))
+    me = g.user["id"]
+    generic = "If that person has a Basecamp account, they will see your friend request."
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT id, name FROM users WHERE email = %s", (email,))
+        other = cur.fetchone()
+        if other is None:
+            flash(generic, "info")  # same message whether or not the account exists
+            return redirect(url_for("friends"))
+        if other["id"] == me:
+            flash("You cannot add yourself.", "warning")
+            return redirect(url_for("friends"))
+        cur.execute(
+            "SELECT id, requester_id, status FROM friendships "
+            "WHERE LEAST(requester_id, addressee_id) = LEAST(%s, %s) "
+            "AND GREATEST(requester_id, addressee_id) = GREATEST(%s, %s)",
+            (me, other["id"], me, other["id"]),
+        )
+        existing = cur.fetchone()
+        if existing is None:
+            cur.execute("INSERT INTO friendships (requester_id, addressee_id) VALUES (%s, %s)",
+                        (me, other["id"]))
+            flash(generic, "info")
+        elif existing["status"] == "accepted":
+            flash(f"You and {other['name']} are already friends.", "info")
+        elif existing["requester_id"] == me:
+            flash(generic, "info")  # already waiting on them
+        else:
+            # They already asked you: sending a request back just accepts theirs.
+            cur.execute("UPDATE friendships SET status = 'accepted' WHERE id = %s", (existing["id"],))
+            flash(f"You and {other['name']} are now friends.", "success")
+    db.commit()
+    return redirect(url_for("friends"))
+
+
+@app.route("/friends/<int:friendship_id>/accept", methods=["POST"])
+@login_required
+def friend_accept(friendship_id):
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM friendships WHERE id = %s AND addressee_id = %s AND status = 'pending'",
+            (friendship_id, g.user["id"]),
+        )
+        if cur.fetchone() is None:
+            abort(404)
+        cur.execute("UPDATE friendships SET status = 'accepted' WHERE id = %s", (friendship_id,))
+    db.commit()
+    flash("Friend request accepted.", "success")
+    return redirect(url_for("friends"))
+
+
+@app.route("/friends/<int:friendship_id>/remove", methods=["POST"])
+@login_required
+def friend_remove(friendship_id):
+    """Decline a request, cancel your own request, or unfriend. Any person in the pair may do it."""
+    me = g.user["id"]
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id, requester_id, addressee_id FROM friendships "
+            "WHERE id = %s AND (requester_id = %s OR addressee_id = %s)",
+            (friendship_id, me, me),
+        )
+        pair = cur.fetchone()
+        if pair is None:
+            abort(404)
+        a, b = pair["requester_id"], pair["addressee_id"]
+        cur.execute("DELETE FROM friendships WHERE id = %s", (friendship_id,))
+        # Unfriending also ends any shared trips between the two, so gear access stops at once.
+        cur.execute(
+            "DELETE FROM trip_participants p USING trips t WHERE p.trip_id = t.id AND "
+            "((t.user_id = %s AND p.user_id = %s) OR (t.user_id = %s AND p.user_id = %s))",
+            (a, b, b, a),
+        )
+    db.commit()
+    flash("Removed.", "info")
+    return redirect(url_for("friends"))
+
+
+@app.route("/friends/settings", methods=["POST"])
+@login_required
+def friend_settings():
+    share = request.form.get("share_gear") == "1"
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("UPDATE users SET share_gear = %s WHERE id = %s", (share, g.user["id"]))
+    db.commit()
+    flash("Your gear is now shared with trip partners." if share else "Your gear is now private.", "success")
+    return redirect(url_for("friends"))
+
+
+@app.route("/trips/<int:trip_id>/invite", methods=["POST"])
+@login_required
+def trip_invite(trip_id):
+    get_own_trip_or_404(trip_id)
+    friend_raw = request.form.get("friend_id", "")
+    friend_id = int(friend_raw) if friend_raw.isdigit() and len(friend_raw) < 10 else None
+    db = get_db()
+    with db.cursor() as cur:
+        friend = next((f for f in friends_of(cur, g.user["id"]) if f["id"] == friend_id), None)
+        if friend is None:
+            flash("Choose one of your friends to invite.", "danger")
+        else:
+            cur.execute(
+                "INSERT INTO trip_participants (trip_id, user_id) VALUES (%s, %s) "
+                "ON CONFLICT (trip_id, user_id) DO NOTHING",
+                (trip_id, friend["id"]),
+            )
+            flash(f"Invited {friend['name']}.", "success")
+    db.commit()
+    return redirect(url_for("trip_detail", trip_id=trip_id))
+
+
+@app.route("/trips/<int:trip_id>/partners/<int:user_id>/remove", methods=["POST"])
+@login_required
+def trip_remove_partner(trip_id, user_id):
+    get_own_trip_or_404(trip_id)
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM trip_participants WHERE trip_id = %s AND user_id = %s", (trip_id, user_id))
+    db.commit()
+    flash("Removed from the trip.", "info")
+    return redirect(url_for("trip_detail", trip_id=trip_id))
+
+
+def _answer_invite(trip_id, accept):
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT 1 AS ok FROM trip_participants WHERE trip_id = %s AND user_id = %s AND status = 'invited'",
+            (trip_id, g.user["id"]),
+        )
+        if cur.fetchone() is None:
+            abort(404)
+        if accept:
+            cur.execute("UPDATE trip_participants SET status = 'joined' WHERE trip_id = %s AND user_id = %s",
+                        (trip_id, g.user["id"]))
+        else:
+            cur.execute("DELETE FROM trip_participants WHERE trip_id = %s AND user_id = %s",
+                        (trip_id, g.user["id"]))
+    db.commit()
+    flash("You joined the trip." if accept else "Invitation declined.", "success" if accept else "info")
+    return redirect(url_for("trips"))
+
+
+@app.route("/trips/<int:trip_id>/invite/accept", methods=["POST"])
+@login_required
+def trip_invite_accept(trip_id):
+    return _answer_invite(trip_id, True)
+
+
+@app.route("/trips/<int:trip_id>/invite/decline", methods=["POST"])
+@login_required
+def trip_invite_decline(trip_id):
+    return _answer_invite(trip_id, False)
+
+
+@app.route("/trips/<int:trip_id>/leave", methods=["POST"])
+@login_required
+def trip_leave(trip_id):
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT 1 AS ok FROM trip_participants WHERE trip_id = %s AND user_id = %s AND status = 'joined'",
+            (trip_id, g.user["id"]),
+        )
+        if cur.fetchone() is None:
+            abort(404)
+        cur.execute("DELETE FROM trip_participants WHERE trip_id = %s AND user_id = %s", (trip_id, g.user["id"]))
+    db.commit()
+    flash("You left the trip.", "info")
+    return redirect(url_for("trips"))
+
+
+def trip_members(cur, trip_id):
+    """The trip's owner plus joined partners: [{id, name, share_gear, is_owner}]."""
+    cur.execute(
+        "SELECT u.id, u.name, u.share_gear, TRUE AS is_owner FROM trips t JOIN users u ON u.id = t.user_id "
+        "WHERE t.id = %s UNION ALL "
+        "SELECT u.id, u.name, u.share_gear, FALSE AS is_owner FROM trip_participants p "
+        "JOIN users u ON u.id = p.user_id WHERE p.trip_id = %s AND p.status = 'joined'",
+        (trip_id, trip_id),
+    )
+    return cur.fetchall()
+
+
+def partner_trip_view(trip_id):
+    """Read-only trip page for a joined partner. Anyone else gets a 404."""
+    with get_db().cursor() as cur:
+        members = trip_members(cur, trip_id)
+        if g.user["id"] not in {m["id"] for m in members}:
+            abort(404)
+        cur.execute(
+            "SELECT t.id, t.trip_date, t.status, t.notes, o.id AS objective_id, o.name AS objective_name, "
+            "o.region, o.elevation_ft, o.difficulty FROM trips t JOIN objectives o ON o.id = t.objective_id "
+            "WHERE t.id = %s",
+            (trip_id,),
+        )
+        trip = cur.fetchone()
+    owner = next(m for m in members if m["is_owner"])
+    others = [m for m in members if m["id"] != g.user["id"]]
+    return render_template("trip_partner.html", trip=trip, owner=owner, others=others)
+
+
+@app.route("/trips/<int:trip_id>/partners/<int:user_id>/gear")
+@login_required
+def partner_gear(trip_id, user_id):
+    """A trip partner's gear library, visible only to people on the same trip and only if shared."""
+    with get_db().cursor() as cur:
+        members = trip_members(cur, trip_id)
+        ids = {m["id"] for m in members}
+        if g.user["id"] not in ids or user_id not in ids or user_id == g.user["id"]:
+            abort(404)
+        target = next(m for m in members if m["id"] == user_id)
+        if not target["share_gear"]:
+            return render_template(
+                "error.html", title="Gear not shared",
+                message=f"{target['name']} has not shared their gear with trip partners."), 403
+        cur.execute(
+            "SELECT name, category, weight_oz FROM gear_items WHERE user_id = %s ORDER BY category, name",
+            (user_id,),
+        )
+        items = cur.fetchall()
+        cur.execute(
+            "SELECT o.name FROM trips t JOIN objectives o ON o.id = t.objective_id WHERE t.id = %s", (trip_id,)
+        )
+        objective_name = cur.fetchone()["name"]
+    return render_template("partner_gear.html", owner_name=target["name"], items=items, trip_id=trip_id,
+                           objective_name=objective_name, total_oz=sum(i["weight_oz"] for i in items))
 
 
 def _planned_view(label, checkpoint):

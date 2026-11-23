@@ -76,3 +76,26 @@ BEGIN
         ALTER TABLE loadout_items ADD CONSTRAINT loadout_items_qty_positive CHECK (qty >= 1);
     END IF;
 END $$;
+
+-- Checkpoint 6 extra: friends, trip partners, and an opt-in setting to share gear (safe to re-run).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS share_gear BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS friendships (
+    id           SERIAL PRIMARY KEY,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    addressee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted')),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (requester_id <> addressee_id)
+);
+-- One row per pair of people, whichever of them asked first.
+CREATE UNIQUE INDEX IF NOT EXISTS friendships_pair_key
+    ON friendships (LEAST(requester_id, addressee_id), GREATEST(requester_id, addressee_id));
+
+CREATE TABLE IF NOT EXISTS trip_participants (
+    trip_id    INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited', 'joined')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (trip_id, user_id)
+);

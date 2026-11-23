@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Trip to {{ trip.objective_name }}{% endblock %}
+{% block content %}
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/trips">My Trips</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ trip.objective_name }}</li>
+  </ol></nav>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div>
+      <h1 class="h2 mb-1">{{ trip.objective_name }}
+        <span id="trip-status" class="badge fs-6 align-middle {% if trip.status == 'completed' %}text-bg-success{% elif trip.status == 'attempted' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ trip.status | capitalize }}</span></h1>
+      <div class="text-muted">{{ trip.trip_date | pretty_date }} &middot; {{ trip.region }}{% if trip.elevation_ft %} &middot; {{ "{:,}".format(trip.elevation_ft) }} ft{% endif %} &middot; {{ trip.difficulty }}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="/objectives/{{ trip.objective_id }}">Objective page</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/trips/{{ trip.id }}/checklist">Checklist</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/trips/{{ trip.id }}/calendar.ics">Calendar</a>
+      <form method="post" action="/trips/{{ trip.id }}/delete" onsubmit="return confirm('Remove your trip to ' + {{ trip.objective_name | tojson | forceescape }} + '?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger btn-sm" type="submit">Remove</button></form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-5"><div class="border rounded p-3 h-100">
+      <h2 class="h6">Status</h2>
+      <p class="small text-muted mb-2">
+        {% if trip.status == 'planned' %}This trip is planned. After it happens, mark it attempted (turned around) or completed (summited).
+        {% elif trip.status == 'attempted' %}You attempted this trip. Mark it completed if you went back and finished it, or move it back to planned.
+        {% else %}You completed this trip. Nice work.{% endif %}</p>
+      {% if in_future %}<p class="small text-warning-emphasis mb-2" id="future-note">Dated in the future: you can mark it attempted or completed once the date has passed.</p>{% endif %}
+      <div class="d-flex flex-wrap gap-2">
+      {% for s in next_statuses %}
+        <form method="post" action="/trips/{{ trip.id }}/status">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="status" value="{{ s }}">
+          <button class="btn btn-sm {% if s == 'completed' %}btn-success{% elif s == 'attempted' %}btn-warning{% else %}btn-outline-secondary{% endif %}" type="submit"
+            {% if in_future and s != 'planned' %}disabled{% endif %}>{% if s == 'planned' %}Back to planned{% else %}Mark {{ s }}{% endif %}</button></form>
+      {% endfor %}
+      </div>
+    </div></div>
+
+    <div class="col-12 col-lg-7"><div class="border rounded p-3 h-100">
+      <h2 class="h6">Loadout</h2>
+      {% if trip.loadout_id %}
+        <p class="mb-1"><a href="/loadouts/{{ trip.loadout_id }}">{{ trip.loadout_name }}</a></p>
+        <p class="small text-muted mb-0">{{ pack_count }} item{{ '' if pack_count == 1 else 's' }}, {{ pack_oz | weight }} total</p>
+      {% else %}
+        <p class="text-muted mb-0">No loadout attached.{% if can_edit %} Choose one below.{% endif %}</p>
+      {% endif %}
+    </div></div>
+  </div>
+
+  {% if can_edit %}
+  <h2 class="h5">Edit trip</h2>
+  <form class="row g-2 mb-4" method="post" action="/trips/{{ trip.id }}/edit" id="edit-trip">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-12 col-md-4"><label class="form-label small" for="loadout_id">Loadout</label>
+      <select class="form-select" id="loadout_id" name="loadout_id">
+        <option value="">No loadout</option>
+        {% for l in loadouts %}<option value="{{ l.id }}"{% if l.id == form.loadout_id %} selected{% endif %}>{{ l.name }} ({{ l.trip_type }})</option>{% endfor %}
+      </select></div>
+    <div class="col-12 col-md-3"><label class="form-label small" for="trip_date">Date</label>
+      <input class="form-control" id="trip_date" name="trip_date" type="date" value="{{ form.trip_date }}" min="2000-01-01" required></div>
+    <div class="col-12"><label class="form-label small" for="notes">Notes</label>
+      <textarea class="form-control" id="notes" name="notes" rows="3" maxlength="{{ max_notes }}">{{ form.notes }}</textarea></div>
+    <div class="col-12"><button class="btn btn-primary" type="submit">Save changes</button></div>
+  </form>
+  {% else %}
+  <h2 class="h5">Notes</h2>
+  <p style="white-space: pre-wrap" class="mb-4">{{ trip.notes or "No notes." }}</p>
+  {% endif %}
+
+  <h2 class="h5">Trip partners</h2>
+  <div class="mb-4" id="trip-partners">
+    {% if partners %}
+    <ul class="list-group mb-3">
+      {% for p in partners %}
+      <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <span>{{ p.name }} <span class="badge {% if p.status == 'joined' %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ p.status | capitalize }}</span></span>
+        <span class="d-flex gap-2 align-items-center">
+          {% if p.status == 'joined' %}{% if p.share_gear %}<a class="btn btn-sm btn-outline-secondary" href="/trips/{{ trip.id }}/partners/{{ p.id }}/gear">View gear</a>{% else %}<span class="small text-muted">Gear not shared</span>{% endif %}{% endif %}
+          <form method="post" action="/trips/{{ trip.id }}/partners/{{ p.id }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="text-muted">No partners yet.</p>{% endif %}
+    {% if invitable_friends %}
+    <form class="row g-2 align-items-end" method="post" action="/trips/{{ trip.id }}/invite">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="col-12 col-md-6"><label class="form-label small" for="friend_id">Invite a friend</label>
+        <select class="form-select" id="friend_id" name="friend_id" required>
+          <option value="">Choose a friend...</option>
+          {% for f in invitable_friends %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}
+        </select></div>
+      <div class="col-auto"><button class="btn btn-primary" type="submit">Invite</button></div>
+    </form>
+    {% else %}<p class="small text-muted mb-0">{% if not partners %}Add friends on the <a href="/friends">Friends page</a>, then invite them here.{% else %}All your friends are already on this trip.{% endif %}</p>{% endif %}
+  </div>
+
+  <h2 class="h5">Conditions reports</h2>
+  {% if can_report %}
+  <form class="mb-3" method="post" action="/trips/{{ trip.id }}/reports" id="add-report">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="form-label small" for="conditions_text">How were the conditions? Snow, trail, weather, route notes...</label>
+    <textarea class="form-control mb-2" id="conditions_text" name="conditions_text" rows="3" maxlength="{{ max_report }}" required></textarea>
+    <button class="btn btn-primary btn-sm" type="submit">Add report</button>
+    <span class="small text-muted ms-2">Reports appear on the objective's page without your name, to help other climbers.</span>
+  </form>
+  {% else %}
+  <p class="text-muted">Mark the trip attempted or completed to write a conditions report.</p>
+  {% endif %}
+
+  {% if reports %}
+  <ul class="list-group mb-4" id="reports">
+    {% for r in reports %}
+    <li class="list-group-item d-flex justify-content-between align-items-start gap-3">
+      <div><div class="small text-muted">{{ r.created_at.strftime("%b %d, %Y") }}</div><div style="white-space: pre-wrap">{{ r.conditions_text }}</div></div>
+      <form method="post" action="/trips/{{ trip.id }}/reports/{{ r.id }}/delete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% elif can_report %}
+  <p class="text-muted">No reports yet.</p>
+  {% endif %}
+{% endblock %}
